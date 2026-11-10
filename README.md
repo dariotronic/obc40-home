@@ -24,17 +24,44 @@ Everything installs in your home directory: no root needed.
 
 ## Install
 
-On the board, as the desktop user:
+On the board, open a terminal **as the desktop user** (not root) and run **one line**:
+
+```sh
+wget -qO- https://raw.githubusercontent.com/dariotronic/obc40-home/main/get.sh | sh
+```
+
+To install the Spotify remote [obc40-desk-player](https://github.com/dariotronic/obc40-desk-player) too, in one go:
+
+```sh
+wget -qO- https://raw.githubusercontent.com/dariotronic/obc40-home/main/get.sh | sh -s -- --with-desk-player
+```
+
+[`get.sh`](get.sh) does the following:
+1. checks the system packages and, if some are missing, offers to install them with `su` (it asks for the root password);
+2. downloads the latest release and verifies its SHA-256 checksum;
+3. runs `install.sh`;
+4. starts the app.
+
+Other options:
+- `--no-autostart`: do not start the launcher at every login;
+- `--desktop-icon` and `--autostart`: for Desk Player.
+
+Running it again reinstalls the latest version.
+
+<details><summary>Manual install, step by step</summary>
 
 ```sh
 cd /tmp
 wget https://github.com/dariotronic/obc40-home/releases/latest/download/obc40-home.tar.gz
+wget https://github.com/dariotronic/obc40-home/releases/latest/download/obc40-home.tar.gz.sha256
+sha256sum -c obc40-home.tar.gz.sha256
 tar xzf obc40-home.tar.gz
 sh obc40-home/install.sh            # add --no-autostart if you do not want it at every login
 ~/.local/bin/obc-home &
 ```
+</details>
 
-Optional, to make the XFCE desktop itself touch-friendly the way the author uses it (dark theme, bigger panels, Italian keyboard, docked on-screen keyboard): read [`extras/xfce-touch-setup.sh`](extras/xfce-touch-setup.sh), then run `sh obc40-home/extras/xfce-touch-setup.sh`.
+Optional, to make the XFCE desktop itself touch-friendly the way the author uses it (dark theme, bigger panels, Italian keyboard, docked on-screen keyboard): read [`extras/xfce-touch-setup.sh`](extras/xfce-touch-setup.sh), then run it from a downloaded package (`sh obc40-home/extras/xfce-touch-setup.sh`) or from the installed copy (`sh ~/.local/share/obc40-home/extras/xfce-touch-setup.sh`).
 
 ### Where things go
 
@@ -111,15 +138,19 @@ Issues and pull requests are welcome. Only the maintainers can push to this repo
 - riquadri grandi per Musica, Terminale, File, Impostazioni, Wi-Fi, tastiera a schermo, Desktop, Android (solo sulle schede con dual boot) e Spegni;
 - barra di stato con Wi-Fi, indirizzo IP, batteria, temperatura e tempo di accensione.
 
-**Installazione**, sulla scheda con l'utente del desktop (non serve root; serve `apk add py3-gobject3 gtk+3.0`):
+**Installazione**: sulla scheda apri un terminale **con l'utente del desktop** (non root) e scrivi **una riga**:
 
 ```sh
-cd /tmp
-wget https://github.com/dariotronic/obc40-home/releases/latest/download/obc40-home.tar.gz
-tar xzf obc40-home.tar.gz
-sh obc40-home/install.sh
-~/.local/bin/obc-home &
+wget -qO- https://raw.githubusercontent.com/dariotronic/obc40-home/main/get.sh | sh
 ```
+
+Per installare insieme anche Desk Player, il telecomando Spotify:
+
+```sh
+wget -qO- https://raw.githubusercontent.com/dariotronic/obc40-home/main/get.sh | sh -s -- --with-desk-player
+```
+
+Lo script controlla i pacchetti di sistema e, se ne manca qualcuno, si offre di installarli chiedendo la password di root. Poi scarica l'ultima versione, ne verifica il checksum, la installa e avvia l'app.
 
 **Aggiornamenti**: tocca il numero di versione in basso a destra (**`v0.0.1 ↻`**). Se c'è una versione nuova vedi le novità e puoi toccare **Aggiorna**. L'app scarica il pacchetto, ne verifica il checksum, lo installa e si riavvia. Se la nuova versione non parte, torna da sola a quella precedente. Gli aggiornamenti partono solo quando tocchi il pulsante.
 
