@@ -9,7 +9,8 @@ A fullscreen, touch-friendly launcher for the **OBC40** board (HTE/Tecnint, NXP 
 ## Features
 
 - Big clock and date, plus the weather from [Open-Meteo](https://open-meteo.com/) (no account needed). Tap the weather card to set your city.
-- Large tiles for **Music** ([obc40-desk-player](https://github.com/dariotronic/obc40-desk-player)), Terminal, Files, Settings, Wi-Fi, on-screen keyboard, Desktop, **Android** and Power off. The Android tile only appears on dual-boot boards that have `boot-android`.
+- Large tiles for Terminal, Files, Settings, Wi-Fi, on-screen keyboard, Desktop, **Android** and Power off. The Android tile only appears on dual-boot boards that have `boot-android`.
+- A big **main app** tile for the app you use most (see [Configuration](#configuration)). By default it opens the list of all applications.
 - Status bar with Wi-Fi network and signal, IP address, battery, temperature and uptime.
 - `obc-fitwin`: maximises windows that would not fit the 600 px high screen.
 - **Manual updates**: tap the version number at the bottom right to check for a new release.
@@ -30,21 +31,13 @@ On the board, open a terminal **as the desktop user** (not root) and run **one l
 wget -qO- https://raw.githubusercontent.com/dariotronic/obc40-home/main/get.sh | sh
 ```
 
-To install the Spotify remote [obc40-desk-player](https://github.com/dariotronic/obc40-desk-player) too, in one go:
-
-```sh
-wget -qO- https://raw.githubusercontent.com/dariotronic/obc40-home/main/get.sh | sh -s -- --with-desk-player
-```
-
 [`get.sh`](get.sh) does the following:
 1. checks the system packages and, if some are missing, offers to install them with `su` (it asks for the root password);
 2. downloads the latest release and verifies its SHA-256 checksum;
 3. runs `install.sh`;
 4. starts the app.
 
-Other options:
-- `--no-autostart`: do not start the launcher at every login;
-- `--desktop-icon` and `--autostart`: for Desk Player.
+Option: `--no-autostart` (`… | sh -s -- --no-autostart`) does not start the launcher at every login.
 
 Running it again reinstalls the latest version.
 
@@ -70,7 +63,16 @@ Optional, to make the XFCE desktop itself touch-friendly the way the author uses
 | `~/.local/share/obc40-home/` | the app (`.prev` next to it is the previous version) |
 | `~/.local/bin/obc-home`, `~/.local/bin/obc-fitwin` | launchers |
 | `~/.config/autostart/obc-home.desktop`, `obc-fitwin.desktop` | start at login |
-| `~/.config/obc-home.ini` | your settings (weather city) |
+| `~/.config/obc-home.ini` | your settings (see below) |
+
+## Configuration
+
+`~/.config/obc-home.ini` holds your settings. The weather city is written there when you set it from the weather card. To choose the app of the big tile, add its `.desktop` file name, as found in `/usr/share/applications` or `~/.local/share/applications`, then restart the launcher:
+
+```ini
+[launcher]
+main_app = xfce4-terminal.desktop
+```
 
 ## Updating
 
@@ -98,7 +100,7 @@ The code is plain Python 3 + GTK 3 with no build step.
 |---|---|
 | `obc-home` | the launcher |
 | `obc-fitwin` | the window fitter |
-| `obc_update.py` | the updater, shared with obc40-desk-player: keep the two copies identical |
+| `obc_update.py` | the in-app updater (GitHub Releases) |
 | `faccessat-fix/` | `LD_PRELOAD` shim for the 4.14 kernel. Recent musl and GLib use `faccessat2`, which needs kernel 5.8 or newer. Build it with `zig cc -target aarch64-linux-musl -shared -fPIC -O2` |
 | `dev/` | test helpers to run on the board: `env.sh` attaches an SSH shell to the graphical session, `shot.sh` takes a screenshot, `uitool.py` simulates taps |
 
@@ -135,19 +137,14 @@ Issues and pull requests are welcome. Only the maintainers can push to this repo
 
 **Cosa fa:**
 - orologio, data e meteo (tocca il riquadro del meteo per scegliere la città);
-- riquadri grandi per Musica, Terminale, File, Impostazioni, Wi-Fi, tastiera a schermo, Desktop, Android (solo sulle schede con dual boot) e Spegni;
+- un riquadro grande per l'app che usi di più, da scegliere in `~/.config/obc-home.ini` (sezione `[launcher]`, voce `main_app`, vedi [Configuration](#configuration)); se non la scegli apre l'elenco di tutte le applicazioni;
+- riquadri per Terminale, File, Impostazioni, Wi-Fi, tastiera a schermo, Desktop, Android (solo sulle schede con dual boot) e Spegni;
 - barra di stato con Wi-Fi, indirizzo IP, batteria, temperatura e tempo di accensione.
 
 **Installazione**: sulla scheda apri un terminale **con l'utente del desktop** (non root) e scrivi **una riga**:
 
 ```sh
 wget -qO- https://raw.githubusercontent.com/dariotronic/obc40-home/main/get.sh | sh
-```
-
-Per installare insieme anche Desk Player, il telecomando Spotify:
-
-```sh
-wget -qO- https://raw.githubusercontent.com/dariotronic/obc40-home/main/get.sh | sh -s -- --with-desk-player
 ```
 
 Lo script controlla i pacchetti di sistema e, se ne manca qualcuno, si offre di installarli chiedendo la password di root. Poi scarica l'ultima versione, ne verifica il checksum, la installa e avvia l'app.

@@ -52,7 +52,7 @@ fi
 mkdir -p "$BIN"
 cat > "$BIN/obc-home" <<'EOF'
 #!/bin/sh
-# obc40-home launcher (written by install.sh)
+# obc40-home wrapper (written by install.sh)
 D="$HOME/.local/share/obc40-home"
 K=$(uname -r); KMAJ=${K%%.*}; KMIN=${K#*.}; KMIN=${KMIN%%.*}
 if [ "$KMAJ" -lt 5 ] || { [ "$KMAJ" -eq 5 ] && [ "$KMIN" -lt 8 ]; }; then
