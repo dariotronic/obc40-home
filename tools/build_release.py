@@ -37,8 +37,9 @@ DIST.mkdir(exist_ok=True)
 tar = DIST / f"{NAME}.tar.gz"
 git("archive", "--format=tar.gz", f"--prefix={NAME}/", "-o", str(tar), "HEAD")
 digest = hashlib.sha256(tar.read_bytes()).hexdigest()
-(DIST / f"{NAME}.tar.gz.sha256").write_text(f"{digest}  {NAME}.tar.gz\n")
-(DIST / "notes.md").write_text(m.group(1).strip() + "\n", encoding="utf-8")
+# write_bytes: LF line endings on Windows too (sha256sum -c fails on "name\r")
+(DIST / f"{NAME}.tar.gz.sha256").write_bytes(f"{digest}  {NAME}.tar.gz\n".encode())
+(DIST / "notes.md").write_bytes((m.group(1).strip() + "\n").encode("utf-8"))
 
 print(f"{tar.name}  {tar.stat().st_size} bytes  sha256 {digest}")
 print("\nPublish with:")
