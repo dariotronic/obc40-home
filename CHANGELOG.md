@@ -2,6 +2,12 @@
 
 All notable changes to obc40-home. Versions follow [semantic versioning](https://semver.org/).
 
+## 0.0.2
+
+- The big tile is now generic: it opens the app set in `~/.config/obc-home.ini` (`[launcher] main_app = <file>.desktop`), or the list of all applications if none is set.
+- One-line installer: `wget -qO- https://raw.githubusercontent.com/dariotronic/obc40-home/main/get.sh | sh`.
+- Release checksums use LF line endings, so `sha256sum -c` works.
+
 ## 0.0.1
 
 First public release.

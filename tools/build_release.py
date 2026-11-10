@@ -1,6 +1,6 @@
-"""Builds the release package from the committed HEAD (maintainers only).
+"""Builds the release package from main (maintainers only).
 
-    python tools/build_release.py
+    git checkout main && git pull && python tools/build_release.py
 
 Creates dist/<name>.tar.gz, dist/<name>.tar.gz.sha256 and dist/notes.md (the CHANGELOG section of
 the current VERSION), then prints the `gh release create` command to publish them.
@@ -25,6 +25,14 @@ def git(*args):
 
 if git("status", "--porcelain").strip():
     sys.exit("Commit (or stash) your changes first: the release is built from HEAD.")
+if git("rev-parse", "--abbrev-ref", "HEAD").strip() != "main":
+    sys.exit("Releases are built from main: merge develop into main with a pull request, then "
+             "`git checkout main && git pull`.")
+git("fetch", "--quiet", "--tags", "origin", "main")
+if git("rev-parse", "HEAD").strip() != git("rev-parse", "origin/main").strip():
+    sys.exit("Your main is not the same as origin/main: run `git pull` (and push nothing to main directly).")
+if git("tag", "-l", f"v{VERSION}").strip():
+    sys.exit(f"v{VERSION} is already released: bump VERSION (and CHANGELOG.md) on develop.")
 if not re.fullmatch(r"\d+\.\d+\.\d+", VERSION):
     sys.exit(f"VERSION must look like 1.2.3, found {VERSION!r}")
 

@@ -113,11 +113,25 @@ ssh <user>@<board> '. ~/.local/share/obc40-home/dev/env.sh; pkill -f "share/obc4
 
 `dev/` is only in the git repository, not in the release package: copy it to the board if you need it.
 
+### Branches
+
+| Branch | What |
+|---|---|
+| `develop` | default branch, where the work happens. Pull requests go here. For longer work, use a `feature/<name>` branch off `develop` and merge it back with a pull request. |
+| `main` | only released code, the same code boards get through the updater and `get.sh`. It changes only through a pull request from `develop`. |
+
+Both branches are protected against deletion and force pushes.
+
 ### Releasing (maintainers)
 
-1. Bump `VERSION` and add a `## x.y.z` section to `CHANGELOG.md`. That section becomes the release notes the user sees on the board.
-2. Commit and push.
-3. Run `python tools/build_release.py`. It builds `dist/obc40-home.tar.gz` and its `.sha256` from HEAD, then prints the `git tag` and `gh release create` commands to run.
+1. On `develop`: bump `VERSION` and add a `## x.y.z` section at the top of `CHANGELOG.md`. That section becomes the release notes the user sees on the board. Commit and push.
+2. Open a pull request from `develop` to `main` and merge it:
+   ```sh
+   gh pr create --base main --head develop --title "Release vx.y.z" --body "See CHANGELOG.md"
+   gh pr merge --merge
+   ```
+3. `git checkout main && git pull`, then run `python tools/build_release.py`. It refuses to run outside an up-to-date `main` or for a version that already has a tag. It builds `dist/obc40-home.tar.gz` and its `.sha256`, then prints the `git tag` and `gh release create` commands to run.
+4. Bring `develop` level with `main`: `git checkout develop && git merge main && git push`.
 
 The updater always takes the **latest release**: publish one only when it is ready for every board.
 
