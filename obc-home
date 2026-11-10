@@ -1,0 +1,421 @@
+#!/usr/bin/env python3
+"""OBC40 Home: touch-friendly launcher for the OBC40 1024x600 display (GTK3).
+
+https://github.com/dariotronic/obc40-home
+"""
+import configparser
+import json
+import os
+import shutil
+import socket
+import subprocess
+import sys
+import threading
+import time
+import urllib.parse
+import urllib.request
+
+import gi
+gi.require_version("Gtk", "3.0")
+gi.require_version("Gdk", "3.0")
+from gi.repository import Gdk, Gio, GLib, Gtk  # noqa: E402
+
+APP_DIR = os.path.dirname(os.path.realpath(__file__))
+sys.path.insert(0, APP_DIR)
+import obc_update  # noqa: E402
+
+NAME = "obc40-home"
+REPO = "dariotronic/obc40-home"
+WRAPPER = os.path.expanduser("~/.local/bin/obc-home")
+DESK_PLAYER = os.path.expanduser("~/.local/bin/desk-player")
+CONF = os.path.expanduser("~/.config/obc-home.ini")
+GIORNI = ["lunedì", "martedì", "mercoledì", "giovedì", "venerdì", "sabato", "domenica"]
+MESI = ["gennaio", "febbraio", "marzo", "aprile", "maggio", "giugno", "luglio",
+        "agosto", "settembre", "ottobre", "novembre", "dicembre"]
+
+# codice WMO -> (descrizione, icona)
+METEO = {
+    0: ("Sereno", "weather-clear"), 1: ("Poco nuvoloso", "weather-few-clouds"),
+    2: ("Parz. nuvoloso", "weather-few-clouds"), 3: ("Coperto", "weather-overcast"),
+    45: ("Nebbia", "weather-fog"), 48: ("Nebbia", "weather-fog"),
+    51: ("Pioviggine", "weather-showers-scattered"), 53: ("Pioviggine", "weather-showers-scattered"),
+    55: ("Pioviggine", "weather-showers-scattered"), 61: ("Pioggia debole", "weather-showers"),
+    63: ("Pioggia", "weather-showers"), 65: ("Pioggia forte", "weather-showers"),
+    71: ("Neve debole", "weather-snow"), 73: ("Neve", "weather-snow"), 75: ("Neve forte", "weather-snow"),
+    80: ("Rovesci", "weather-showers"), 81: ("Rovesci", "weather-showers"), 82: ("Rovesci forti", "weather-showers"),
+    95: ("Temporale", "weather-storm"), 96: ("Temporale", "weather-storm"), 99: ("Temporale", "weather-storm"),
+}
+
+CSS = b"""
+window.home { background-color: #101114; }
+.clock { font-size: 92px; font-weight: 300; color: #ffffff; }
+.date { font-size: 22px; color: #9aa0aa; }
+.card { background-color: #1b1d23; border-radius: 16px; }
+.tile { background-color: #1b1d23; background-image: none; border: none; border-radius: 16px;
+        box-shadow: none; color: #ffffff; padding: 8px; }
+.tile:hover { background-color: #23262d; }
+.tile:active { background-color: #ffb547; color: #101114; }
+.tile label { font-size: 17px; }
+.temp { font-size: 44px; font-weight: 300; color: #ffffff; }
+.wdesc { font-size: 16px; color: #ffb547; }
+.wsmall { font-size: 14px; color: #9aa0aa; }
+.status { font-size: 14px; color: #9aa0aa; }
+.status-strong { font-size: 14px; color: #ffffff; }
+button.verbtn { background: none; background-image: none; border: none; box-shadow: none;
+                color: #9aa0aa; padding: 0 4px; min-height: 0; font-size: 14px; }
+button.verbtn:active { color: #ffb547; }
+"""
+
+
+def sh(cmd):
+    try:
+        return subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=5).stdout.strip()
+    except Exception:
+        return ""
+
+
+def read(path, default=""):
+    try:
+        with open(path) as f:
+            return f.read().strip()
+    except OSError:
+        return default
+
+
+def http_json(url):
+    req = urllib.request.Request(url, headers={"User-Agent": "obc-home/1.0"})
+    with urllib.request.urlopen(req, timeout=10) as r:
+        return json.loads(r.read().decode())
+
+
+class TouchFocus:
+    """Col touch il focus resta sui pulsanti toccati (bordo tratteggiato): lo si toglie subito,
+    tranne che dai campi di testo. Quando la tastiera a schermo si chiude, si toglie anche da quelli."""
+
+    def __init__(self, win):
+        self.win = win
+        win.connect("set-focus", self.on_set_focus)
+        try:
+            bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+            bus.signal_subscribe("org.onboard.Onboard", "org.freedesktop.DBus.Properties", "PropertiesChanged",
+                                 "/org/onboard/Onboard/Keyboard", None, Gio.DBusSignalFlags.NONE,
+                                 self.on_keyboard, None)
+        except GLib.Error:
+            pass
+
+    def on_set_focus(self, _win, widget):
+        if widget is not None and not isinstance(widget, Gtk.Entry):
+            GLib.idle_add(self.drop, False)
+
+    def drop(self, also_entries):
+        w = self.win.get_focus()
+        if w is not None and (also_entries or not isinstance(w, Gtk.Entry)):
+            self.win.set_focus(None)
+        return False
+
+    def on_keyboard(self, _conn, _sender, _path, _iface, _signal, params, _data):
+        changed = params.unpack()[1]
+        if changed.get("Visible") is False:
+            GLib.idle_add(self.drop, True)
+
+
+class Home(Gtk.ApplicationWindow):
+    def __init__(self, app):
+        super().__init__(application=app, title="Home")
+        self.get_style_context().add_class("home")
+        self.set_default_size(1024, 600)
+        self.cfg = configparser.ConfigParser()
+        self.cfg.read(CONF)
+
+        root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
+        root.set_margin_top(18); root.set_margin_bottom(10)
+        root.set_margin_start(22); root.set_margin_end(22)
+        self.overlay = Gtk.Overlay()   # le finestre "modali" (aggiornamenti) stanno sopra la home
+        self.overlay.add(root)
+        self.add(self.overlay)
+
+        # --- intestazione: orologio + meteo ---
+        head = Gtk.Box(spacing=16)
+        root.pack_start(head, False, False, 0)
+
+        clockbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self.clock = Gtk.Label(xalign=0); self.clock.get_style_context().add_class("clock")
+        self.date = Gtk.Label(xalign=0); self.date.get_style_context().add_class("date")
+        clockbox.pack_start(self.clock, False, False, 0)
+        clockbox.pack_start(self.date, False, False, 0)
+        head.pack_start(clockbox, True, True, 0)
+
+        wbtn = Gtk.Button(); wbtn.get_style_context().add_class("tile")
+        wbtn.set_size_request(330, -1)
+        wbtn.connect("clicked", self.ask_city)
+        wbox = Gtk.Box(spacing=14); wbox.set_margin_start(10); wbox.set_margin_end(10)
+        self.wicon = Gtk.Image.new_from_icon_name("weather-few-clouds", Gtk.IconSize.DIALOG)
+        self.wicon.set_pixel_size(72)
+        wtext = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, valign=Gtk.Align.CENTER)
+        self.wtemp = Gtk.Label(label="--°", xalign=0); self.wtemp.get_style_context().add_class("temp")
+        self.wdesc = Gtk.Label(label="Meteo", xalign=0); self.wdesc.get_style_context().add_class("wdesc")
+        self.wsmall = Gtk.Label(label="Tocca per impostare la città", xalign=0)
+        self.wsmall.get_style_context().add_class("wsmall")
+        for w in (self.wtemp, self.wdesc, self.wsmall):
+            wtext.pack_start(w, False, False, 0)
+        wbox.pack_start(self.wicon, False, False, 0)
+        wbox.pack_start(wtext, True, True, 0)
+        wbtn.add(wbox)
+        head.pack_end(wbtn, False, False, 0)
+
+        # --- riquadri ---
+        grid = Gtk.Grid(row_spacing=14, column_spacing=14, row_homogeneous=True, column_homogeneous=True)
+        root.pack_start(grid, True, True, 0)
+        music = self.tile("Musica", ["spotify", "spotify-client", "multimedia-audio-player", "audio-x-generic"],
+                          self.open_music, icon_size=96)
+        grid.attach(music, 0, 0, 1, 2)
+        tiles = [
+            ("Terminale", ["utilities-terminal"], lambda: self.run("xfce4-terminal")),
+            ("File", ["system-file-manager", "folder"], lambda: self.run("thunar")),
+            ("Impostazioni", ["preferences-system", "applications-system"], lambda: self.run("xfce4-settings-manager")),
+            ("Wi-Fi e rete", ["network-wireless", "preferences-system-network"], lambda: self.run("nm-connection-editor")),
+            ("Tastiera", ["input-keyboard", "preferences-desktop-keyboard"], self.toggle_keyboard),
+            ("Desktop", ["user-desktop", "desktop"], self.show_desktop),
+            ("Android", ["phone", "smartphone", "computer"], self.boot_android),
+            ("Spegni", ["system-shutdown"], self.poweroff),
+        ]
+        if not shutil.which("boot-android"):  # solo sulle schede con il dual boot Android/Alpine
+            tiles = [t for t in tiles if t[0] != "Android"]
+        for i, (label, icons, action) in enumerate(tiles):
+            grid.attach(self.tile(label, icons, action), 1 + i % 4, i // 4, 1, 1)
+
+        # --- barra di stato ---
+        bar = Gtk.Box(spacing=26)
+        root.pack_end(bar, False, False, 0)
+        self.s_wifi = self.status_item(bar, "network-wireless-symbolic")
+        self.s_ip = self.status_item(bar, "network-workgroup-symbolic")
+        self.s_batt = self.status_item(bar, "battery-good-symbolic")
+        self.s_temp = self.status_item(bar, "temperature-symbolic")
+        self.s_up = self.status_item(bar, "alarm-symbolic")
+        ver = Gtk.Button()
+        vb = Gtk.Box(spacing=6)
+        vi = Gtk.Image.new_from_icon_name("view-refresh-symbolic", Gtk.IconSize.MENU)
+        vb.pack_start(Gtk.Label(label="v" + obc_update.read_version(APP_DIR)), False, False, 0)
+        vb.pack_start(vi, False, False, 0)
+        ver.add(vb)
+        ver.get_style_context().add_class("verbtn")
+        ver.get_accessible().set_name("Controlla aggiornamenti")
+        ver.connect("clicked", lambda *_: self.check_updates())
+        bar.pack_end(ver, False, False, 0)
+
+        self.tick()
+        GLib.timeout_add_seconds(1, self.tick)
+        self.refresh_status()
+        GLib.timeout_add_seconds(5, self.refresh_status)
+        self.refresh_weather()
+        GLib.timeout_add_seconds(900, self.refresh_weather)
+        self.touch_focus = TouchFocus(self)
+        # partita bene: se era appena stata aggiornata, l'aggiornamento resta
+        GLib.timeout_add_seconds(20, obc_update.confirm_started, NAME)
+        GLib.timeout_add_seconds(2, lambda: obc_update.UpdateDialog(
+            self.overlay, NAME, REPO, APP_DIR, WRAPPER, quit_cb=self.get_application().quit).notify_rollback())
+
+    def check_updates(self):
+        obc_update.UpdateDialog(self.overlay, NAME, REPO, APP_DIR, WRAPPER,
+                                quit_cb=self.get_application().quit).start()
+
+    def open_music(self):
+        if os.path.exists(DESK_PLAYER):
+            self.run(DESK_PLAYER)
+        else:
+            self.message("Desk Player non è installato.\n\nLo trovi su github.com/dariotronic/obc40-desk-player")
+
+    # ---------- costruzione ----------
+
+    def tile(self, label, icons, action, icon_size=64):
+        b = Gtk.Button(); b.get_style_context().add_class("tile")
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10, valign=Gtk.Align.CENTER)
+        theme = Gtk.IconTheme.get_default()
+        name = next((n for n in icons if theme.has_icon(n)), "application-x-executable")
+        img = Gtk.Image.new_from_icon_name(name, Gtk.IconSize.DIALOG)
+        img.set_pixel_size(icon_size)
+        box.pack_start(img, False, False, 0)
+        box.pack_start(Gtk.Label(label=label), False, False, 0)
+        b.add(box)
+        b.connect("clicked", lambda *_: action())
+        return b
+
+    def status_item(self, bar, icon):
+        box = Gtk.Box(spacing=6)
+        img = Gtk.Image.new_from_icon_name(icon, Gtk.IconSize.MENU)
+        lab = Gtk.Label(); lab.get_style_context().add_class("status")
+        box.pack_start(img, False, False, 0)
+        box.pack_start(lab, False, False, 0)
+        bar.pack_start(box, False, False, 0)
+        return lab
+
+    # ---------- aggiornamenti ----------
+
+    def tick(self):
+        t = time.localtime()
+        self.clock.set_text(time.strftime("%H:%M", t))
+        self.date.set_text(f"{GIORNI[t.tm_wday]} {t.tm_mday} {MESI[t.tm_mon - 1]}")
+        return True
+
+    def refresh_status(self):
+        def work():
+            wifi = sh("LC_ALL=C nmcli -t -f ACTIVE,SSID,SIGNAL dev wifi list --rescan no | grep '^yes' | head -1")
+            if wifi:
+                parts = wifi.split(":")
+                wifi = f"{':'.join(parts[1:-1])}  {parts[-1]}%"
+            else:
+                wifi = "non connesso"
+            ip = sh("ip -4 -o addr show scope global | awk '{print $4}' | cut -d/ -f1 | head -1") or "-"
+            cap = read("/sys/class/power_supply/battery1/capacity", "?")
+            st = read("/sys/class/power_supply/battery1/status")
+            batt = f"{cap}%" + ("  in carica" if st == "Charging" else "")
+            try:
+                temp = f"{int(read('/sys/class/thermal/thermal_zone0/temp', '0')) / 1000:.0f} °C"
+            except ValueError:
+                temp = "-"
+            up = int(float(read("/proc/uptime", "0").split()[0]))
+            upt = f"acceso da {up // 3600} h {up % 3600 // 60} min" if up >= 3600 else f"acceso da {up // 60} min"
+            GLib.idle_add(self.set_status, wifi, ip, batt, temp, upt)
+        threading.Thread(target=work, daemon=True).start()
+        return True
+
+    def set_status(self, wifi, ip, batt, temp, upt):
+        self.s_wifi.set_text(wifi); self.s_ip.set_text(ip); self.s_batt.set_text(batt)
+        self.s_temp.set_text(temp); self.s_up.set_text(upt)
+        return False
+
+    def refresh_weather(self):
+        city = self.cfg.get("meteo", "citta", fallback="").strip()
+        if not city:
+            return True
+
+        def work():
+            try:
+                lat = self.cfg.get("meteo", "lat", fallback="")
+                lon = self.cfg.get("meteo", "lon", fallback="")
+                if not lat or not lon:
+                    g = http_json("https://geocoding-api.open-meteo.com/v1/search?count=1&language=it&name="
+                                  + urllib.parse.quote(city))
+                    if not g.get("results"):
+                        GLib.idle_add(self.set_weather, None, "Città non trovata", city, "dialog-question")
+                        return
+                    r = g["results"][0]
+                    lat, lon = str(r["latitude"]), str(r["longitude"])
+                    self.cfg["meteo"]["lat"], self.cfg["meteo"]["lon"] = lat, lon
+                    self.cfg["meteo"]["citta"] = r.get("name", city)
+                    self.save_cfg()
+                w = http_json(
+                    f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}"
+                    "&current=temperature_2m,weather_code&daily=temperature_2m_max,temperature_2m_min"
+                    "&timezone=auto&forecast_days=1")
+                code = int(w["current"]["weather_code"])
+                desc, icon = METEO.get(code, ("", "weather-few-clouds"))
+                tmax = round(w["daily"]["temperature_2m_max"][0])
+                tmin = round(w["daily"]["temperature_2m_min"][0])
+                name = self.cfg.get("meteo", "citta")
+                GLib.idle_add(self.set_weather, round(w["current"]["temperature_2m"]), desc,
+                              f"{name}  ·  {tmin}° / {tmax}°", icon)
+            except Exception:
+                GLib.idle_add(self.set_weather, None, "Meteo non disponibile", city, "network-offline")
+        threading.Thread(target=work, daemon=True).start()
+        return True
+
+    def set_weather(self, temp, desc, small, icon):
+        self.wtemp.set_text(f"{temp}°" if temp is not None else "--°")
+        self.wdesc.set_text(desc); self.wsmall.set_text(small)
+        theme = Gtk.IconTheme.get_default()
+        self.wicon.set_from_icon_name(icon if theme.has_icon(icon) else "weather-few-clouds", Gtk.IconSize.DIALOG)
+        self.wicon.set_pixel_size(72)
+        return False
+
+    def save_cfg(self):
+        os.makedirs(os.path.dirname(CONF), exist_ok=True)
+        with open(CONF, "w") as f:
+            self.cfg.write(f)
+
+    # ---------- azioni ----------
+
+    def run(self, cmd):
+        try:
+            subprocess.Popen(cmd.split(), start_new_session=True)
+        except OSError as e:
+            self.message(f"Impossibile avviare {cmd}: {e}")
+
+    def toggle_keyboard(self):
+        self.run("dbus-send --type=method_call --dest=org.onboard.Onboard /org/onboard/Onboard/Keyboard "
+                 "org.onboard.Onboard.Keyboard.ToggleVisible")
+
+    def show_desktop(self):
+        self.iconify()
+
+    def confirm(self, text):
+        d = Gtk.MessageDialog(transient_for=self, modal=True, message_type=Gtk.MessageType.QUESTION,
+                              buttons=Gtk.ButtonsType.YES_NO, text=text)
+        r = d.run(); d.destroy()
+        return r == Gtk.ResponseType.YES
+
+    def message(self, text):
+        d = Gtk.MessageDialog(transient_for=self, modal=True, buttons=Gtk.ButtonsType.OK, text=text)
+        d.run(); d.destroy()
+
+    def boot_android(self):
+        if self.confirm("Riavviare in Android?\nLa scheda si spegnerà: riaccendila con il tasto."):
+            self.run("boot-android")
+
+    def poweroff(self):
+        if self.confirm("Spegnere la scheda?"):
+            self.run("sudo -n /sbin/poweroff")
+
+    def ask_city(self, *_):
+        d = Gtk.Dialog(title="Città per il meteo", transient_for=self, modal=True)
+        d.add_buttons("Annulla", Gtk.ResponseType.CANCEL, "Salva", Gtk.ResponseType.OK)
+        e = Gtk.Entry(text=self.cfg.get("meteo", "citta", fallback=""))
+        e.set_activates_default(True)
+        d.set_default_response(Gtk.ResponseType.OK)
+        box = d.get_content_area(); box.set_spacing(10); box.set_margin_top(12)
+        box.set_margin_start(12); box.set_margin_end(12)
+        box.add(Gtk.Label(label="Scrivi il nome della città:", xalign=0)); box.add(e)
+        d.show_all()
+        self.toggle_keyboard_if_hidden()
+        r = d.run(); city = e.get_text().strip(); d.destroy()
+        if r == Gtk.ResponseType.OK and city:
+            self.cfg["meteo"] = {"citta": city}
+            self.save_cfg()
+            self.set_weather(None, "Aggiorno…", city, "weather-few-clouds")
+            self.refresh_weather()
+
+    def toggle_keyboard_if_hidden(self):
+        self.run("dbus-send --type=method_call --dest=org.onboard.Onboard /org/onboard/Onboard/Keyboard "
+                 "org.onboard.Onboard.Keyboard.Show")
+
+
+class App(Gtk.Application):
+    def __init__(self):
+        super().__init__(application_id="it.dario.obchome", flags=Gio.ApplicationFlags.FLAGS_NONE)
+        self.win = None
+
+    def do_startup(self):
+        Gtk.Application.do_startup(self)
+        settings = Gtk.Settings.get_default()
+        settings.set_property("gtk-application-prefer-dark-theme", True)
+        prov = Gtk.CssProvider(); prov.load_from_data(CSS)
+        Gtk.StyleContext.add_provider_for_screen(Gdk.Screen.get_default(), prov,
+                                                 Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+
+        upd = Gio.SimpleAction.new("check-updates", None)   # per i test, via D-Bus
+        upd.connect("activate", lambda *_: self.win and self.win.check_updates())
+        self.add_action(upd)
+
+    def do_activate(self):
+        if self.win is None:
+            self.win = Home(self)
+            self.win.show_all()
+            self.win.fullscreen()
+        else:
+            self.win.deiconify()
+            self.win.present()
+
+
+if __name__ == "__main__":
+    socket.setdefaulttimeout(15)
+    App().run(None)

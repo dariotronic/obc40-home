@@ -1,0 +1,45 @@
+#!/usr/bin/env python3
+"""Massimizza le finestre che non entrano nello schermo (display 1024x600)."""
+import gi
+gi.require_version("Wnck", "3.0")
+gi.require_version("Gtk", "3.0")
+from gi.repository import GLib, Gtk, Wnck  # noqa: E402
+
+TYPES = (Wnck.WindowType.NORMAL, Wnck.WindowType.DIALOG)
+
+
+def workarea(screen):
+    ws = screen.get_active_workspace()
+    if ws is None:
+        return 0, 0, screen.get_width(), screen.get_height()
+    # area utile: schermo meno pannelli che riservano spazio (stima dai pannelli "dock")
+    top, bottom = 0, 0
+    for w in screen.get_windows():
+        if w.get_window_type() == Wnck.WindowType.DOCK:
+            x, y, ww, hh = w.get_geometry()
+            if y == 0 and ww >= screen.get_width() * 0.9 and hh < 100:
+                top = max(top, hh)
+    return 0, top, screen.get_width(), screen.get_height() - top - bottom
+
+
+def check(win):
+    if win.get_window_type() not in TYPES or win.is_maximized() or win.is_fullscreen():
+        return False
+    screen = win.get_screen()
+    _, top, aw, ah = workarea(screen)
+    x, y, w, h = win.get_geometry()
+    if w > aw or h > ah or y + h > top + ah:
+        win.maximize()
+    return False
+
+
+def opened(screen, win):
+    # le finestre a volte si ridimensionano subito dopo la comparsa: controlla due volte
+    GLib.timeout_add(300, check, win)
+    GLib.timeout_add(1200, check, win)
+
+
+screen = Wnck.Screen.get_default()
+screen.force_update()
+screen.connect("window-opened", opened)
+Gtk.main()
