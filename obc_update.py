@@ -1,7 +1,7 @@
 """Manual updates from GitHub Releases for the OBC40 apps (stdlib + GTK3 only).
 
-The same file is shipped in every OBC40 repository (obc40-home, obc40-desk-player): keep the
-copies identical.
+Self-contained: it only needs the app name, its GitHub repository and the wrapper written by the
+app's install.sh.
 
 Flow (always started by the user, never automatic):
   check()   -> asks the GitHub API for the latest release of the repo
@@ -131,7 +131,7 @@ def confirm_started(name):
 
 
 def rollback_notice(name):
-    """If the launcher had to restore the previous version, returns the version that failed (once)."""
+    """If the wrapper had to restore the previous version, returns the version that failed (once)."""
     path = os.path.expanduser(f"~/.local/share/{name}.rolledback")
     try:
         with open(path) as f:
