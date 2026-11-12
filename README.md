@@ -67,7 +67,7 @@ Optional, to make the XFCE desktop itself touch-friendly the way the author uses
 
 ## Configuration
 
-`~/.config/obc-home.ini` holds your settings. The weather city is written there when you set it from the weather card. To choose the app of the big tile, add its `.desktop` file name, as found in `/usr/share/applications` or `~/.local/share/applications`, then restart the launcher:
+`~/.config/obc-home.ini` holds your settings. The weather city is written there when you set it from the weather card. The app of the big tile is chosen on the screen: tap the empty big tile, or long-press it to change the app, and pick one from the list. The choice is saved there as the `.desktop` file name (from `/usr/share/applications` or `~/.local/share/applications`); you can also write it by hand and restart the launcher:
 
 ```ini
 [launcher]
@@ -151,7 +151,7 @@ Issues and pull requests are welcome. Only the maintainers can push to this repo
 
 **Cosa fa:**
 - orologio, data e meteo (tocca il riquadro del meteo per scegliere la città);
-- un riquadro grande per l'app che usi di più, da scegliere in `~/.config/obc-home.ini` (sezione `[launcher]`, voce `main_app`, vedi [Configuration](#configuration)); se non la scegli apre l'elenco di tutte le applicazioni;
+- un riquadro grande per l'app che usi di più, da scegliere toccando il riquadro vuoto (o con una pressione lunga per cambiarla) dall'elenco delle app installate; la scelta resta salvata in `~/.config/obc-home.ini` (vedi [Configuration](#configuration));
 - riquadri per Terminale, File, Impostazioni, Wi-Fi, tastiera a schermo, Desktop, Android (solo sulle schede con dual boot) e Spegni;
 - barra di stato con Wi-Fi, indirizzo IP, batteria, temperatura e tempo di accensione.
 
