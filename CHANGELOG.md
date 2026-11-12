@@ -2,6 +2,10 @@
 
 All notable changes to obc40-home. Versions follow [semantic versioning](https://semver.org/).
 
+## 0.0.3
+
+- Choose the app of the big tile on the screen: tap the empty tile (or long-press it to change the app) and pick from the list of installed apps; the choice is saved in `~/.config/obc-home.ini`. Before, the list only launched the app and the tile stayed empty.
+
 ## 0.0.2
 
 - The big tile is now generic: it opens the app set in `~/.config/obc-home.ini` (`[launcher] main_app = <file>.desktop`), or the list of all applications if none is set.
