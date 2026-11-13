@@ -1,6 +1,6 @@
 # obc40-home
 
-A fullscreen, touch-friendly launcher for the **OBC40** board (HTE/Tecnint, NXP i.MX 8M Mini, 1024×600 display) running **Alpine Linux with XFCE**.
+A full-screen, touch-friendly launcher for the **OBC40** board (HTE/Tecnint, NXP i.MX 8M Mini, 1024×600 display) running **Alpine Linux with XFCE**.
 
 ![obc40-home on the OBC40 display](docs/screenshot.png)
 
@@ -8,9 +8,10 @@ A fullscreen, touch-friendly launcher for the **OBC40** board (HTE/Tecnint, NXP 
 
 ## Features
 
-- Big clock and date, plus the weather from [Open-Meteo](https://open-meteo.com/) (no account needed). Tap the weather card to set your city.
-- Large tiles for Terminal, Files, Settings, Wi-Fi, on-screen keyboard, Desktop, **Android** and Power off. The Android tile only appears on dual-boot boards that have `boot-android`.
-- A big **main app** tile for the app you use most (see [Configuration](#configuration)). By default it opens the list of all applications.
+- One grid: big clock and date, an edit button, and the weather from [Open-Meteo](https://open-meteo.com/) (no account needed; tap the weather card to set your city).
+- Nine tiles you choose yourself, one of them twice as tall. By default they hold Terminal, Files, Settings, Wi-Fi, on-screen keyboard, Desktop, **Android** and Power off (the Android function only exists on dual-boot boards that have `boot-android`).
+- **Edit mode**: tap the pencil (or long-press a tile). Tiles shrink and wiggle; tap **✕** to empty a tile, the **pencil** to change it, **+** to fill an empty one. You can pick an installed app, a home function, or a **website**: type its address and the tile shows the site's icon. Tap **✓** when done.
+- **Swipe down** anywhere on the home to bring down the XFCE top panel (application menu, open windows, tray, clock); swipe up or touch elsewhere to hide it again. The home sets that panel to hide itself and gives it the home's colours (see [Configuration](#configuration)).
 - Status bar with Wi-Fi network and signal, IP address, battery, temperature and uptime.
 - `obc-fitwin`: maximises windows that would not fit the 600 px high screen.
 - **Manual updates**: tap the version number at the bottom right to check for a new release.
@@ -64,15 +65,28 @@ Optional, to make the XFCE desktop itself touch-friendly the way the author uses
 | `~/.local/bin/obc-home`, `~/.local/bin/obc-fitwin` | launchers |
 | `~/.config/autostart/obc-home.desktop`, `obc-fitwin.desktop` | start at login |
 | `~/.config/obc-home.ini` | your settings (see below) |
+| `~/.cache/obc-home/icons/` | icons of the websites in the tiles |
 
 ## Configuration
 
-`~/.config/obc-home.ini` holds your settings. The weather city is written there when you set it from the weather card. The app of the big tile is chosen on the screen: tap the empty big tile, or long-press it to change the app, and pick one from the list. The choice is saved there as the `.desktop` file name (from `/usr/share/applications` or `~/.local/share/applications`); you can also write it by hand and restart the launcher:
+`~/.config/obc-home.ini` holds your settings. The weather city is written there when you set it from the weather card, and the tiles when you change them in edit mode. You can also edit the file by hand and restart the launcher. `slot0` is the tall tile, `slot1`–`slot8` the small ones, left to right and top to bottom:
 
 ```ini
-[launcher]
-main_app = xfce4-terminal.desktop
+[tiles]
+slot0 = app:xfce4-terminal.desktop
+slot1 = home:files
+slot2 = web:https://example.com/
+slot3 =
 ```
+
+- `app:` an installed app, by its `.desktop` file name (from `/usr/share/applications` or `~/.local/share/applications`);
+- `home:` a home function: `apps`, `terminal`, `files`, `settings`, `network`, `keyboard`, `desktop`, `android`, `poweroff`;
+- `web:` a website, opened in the default browser (a browser has to be installed);
+- empty: an empty tile.
+
+The `[launcher] main_app` setting of version 0.0.3 is still read the first time, then replaced by `[tiles]`.
+
+**XFCE top panel.** At every start the home makes sure the top panel hides itself (`autohide-behavior` 2) and is 48 px high, and gives all panels the home's background colour. It also adds a marked block of panel styles to `~/.config/gtk-3.0/gtk.css` and restarts the panel once when that block changes. To undo it, delete the block between the two `obc-home` comments and change the panel back in *Panel preferences*.
 
 ## Updating
 
@@ -147,12 +161,13 @@ Issues and pull requests are welcome. Only the maintainers can push to this repo
 
 ## Italiano
 
-**obc40-home** è un launcher a schermo intero, pensato per il touch, per la scheda **OBC40** (HTE/Tecnint, display 1024×600) con **Alpine Linux e XFCE**.
+**obc40-home** è un launcher a tutto schermo, pensato per il touch, per la scheda **OBC40** (HTE/Tecnint, display 1024×600) con **Alpine Linux e XFCE**.
 
 **Cosa fa:**
-- orologio, data e meteo (tocca il riquadro del meteo per scegliere la città);
-- un riquadro grande per l'app che usi di più, da scegliere toccando il riquadro vuoto (o con una pressione lunga per cambiarla) dall'elenco delle app installate; la scelta resta salvata in `~/.config/obc-home.ini` (vedi [Configuration](#configuration));
-- riquadri per Terminale, File, Impostazioni, Wi-Fi, tastiera a schermo, Desktop, Android (solo sulle schede con dual boot) e Spegni;
+- un'unica griglia con orologio e data, il pulsante per modificare e il meteo (tocca il meteo per scegliere la città);
+- nove riquadri a scelta, uno alto il doppio; di partenza Terminale, File, Impostazioni, Wi-Fi, tastiera a schermo, Desktop, Android (solo sulle schede con dual boot) e Spegni;
+- **modalità modifica**: tocca la matita (o tieni premuto un riquadro). I riquadri si rimpiccioliscono e oscillano: **✕** libera un riquadro, la **matita** lo cambia, **+** riempie quello vuoto. Puoi scegliere un'app installata, una funzione della home o un **sito web** (scrivi l'indirizzo, l'icona sarà quella del sito). Tocca **✓** per finire;
+- **swipe verso il basso** sulla home: scende il pannello in alto di XFCE (menu delle applicazioni, finestre aperte, area di notifica, orologio); swipe verso l'alto o un tocco altrove lo nasconde;
 - barra di stato con Wi-Fi, indirizzo IP, batteria, temperatura e tempo di accensione.
 
 **Installazione**: sulla scheda apri un terminale **con l'utente del desktop** (non root) e scrivi **una riga**:

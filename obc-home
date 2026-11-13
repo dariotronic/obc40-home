@@ -5,7 +5,9 @@ https://github.com/dariotronic/obc40-home
 """
 import configparser
 import json
+import math
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -18,10 +20,17 @@ import urllib.request
 import gi
 gi.require_version("Gtk", "3.0")
 gi.require_version("Gdk", "3.0")
-from gi.repository import Gdk, Gio, GLib, Gtk  # noqa: E402
+gi.require_version("GdkPixbuf", "2.0")
+from gi.repository import Gdk, GdkPixbuf, Gio, GLib, Gtk  # noqa: E402
 
 APP_DIR = os.path.dirname(os.path.realpath(__file__))
 sys.path.insert(0, APP_DIR)
+try:                                   # GLib >= 2.86: le classi Unix stanno in GioUnix
+    gi.require_version("GioUnix", "2.0")
+    from gi.repository.GioUnix import DesktopAppInfo  # noqa: E402
+except (ValueError, ImportError):
+    DesktopAppInfo = Gio.DesktopAppInfo
+import obc_favicon  # noqa: E402
 import obc_update  # noqa: E402
 
 NAME = "obc40-home"
@@ -58,11 +67,47 @@ window.home { background-color: #101114; }
 .temp { font-size: 44px; font-weight: 300; color: #ffffff; }
 .wdesc { font-size: 16px; color: #ffb547; }
 .wsmall { font-size: 14px; color: #9aa0aa; }
-.status { font-size: 14px; color: #9aa0aa; }
-.status-strong { font-size: 14px; color: #ffffff; }
-button.verbtn { background: none; background-image: none; border: none; box-shadow: none;
-                color: #9aa0aa; padding: 0 4px; min-height: 0; font-size: 14px; }
-button.verbtn:active { color: #ffb547; }
+.tile-empty { background-color: #15171c; }
+.editing .tile-empty { background-color: #1b1d23; color: #ffb547; }
+.tile-mode { color: #c9ced6; }
+.tile-mode.on { background-color: #ffb547; color: #101114; }
+button.badge { min-width: 36px; min-height: 36px; padding: 0; border-radius: 18px; border: none;
+               background-image: none; box-shadow: none; }
+button.badge-del { background-color: #3a3d45; color: #ffffff; }
+button.badge-del:active { background-color: #e5484d; }
+button.badge-edit { background-color: #ffb547; color: #101114; }
+button.badge-edit:active { background-color: #ffffff; }
+.status { font-size: 16px; color: #9aa0aa; }
+.status-strong { font-size: 16px; color: #ffffff; }
+button.verbtn { background-color: #1b1d23; background-image: none; border: none; box-shadow: none;
+                color: #c9ced6; padding: 4px 16px; min-height: 36px; border-radius: 12px; font-size: 17px; }
+button.verbtn:active { background-color: #ffb547; color: #101114; }
+.pick-head { font-size: 14px; color: #ffb547; margin-top: 10px; }
+"""
+
+# funzioni della home che si possono mettere nei riquadri: id -> (etichetta, icone, metodo o comando)
+FUNCS = {
+    "apps": ("Applicazioni", ["applications-all", "view-app-grid", "xfce4-appfinder"], "xfce4-appfinder"),
+    "terminal": ("Terminale", ["utilities-terminal"], "xfce4-terminal"),
+    "files": ("File", ["system-file-manager", "folder"], "thunar"),
+    "settings": ("Impostazioni", ["preferences-system", "applications-system"], "xfce4-settings-manager"),
+    "network": ("Wi-Fi e rete", ["network-wireless", "preferences-system-network"], "nm-connection-editor"),
+    "keyboard": ("Tastiera", ["input-keyboard", "preferences-desktop-keyboard"], "toggle_keyboard"),
+    "desktop": ("Desktop", ["user-desktop", "desktop"], "show_desktop"),
+    "android": ("Android", ["phone", "smartphone", "computer"], "boot_android"),
+    "poweroff": ("Spegni", ["system-shutdown"], "poweroff"),
+}
+SLOTS = 9          # 0 = riquadro grande (2 righe), 1-8 = riquadri piccoli
+TOP_PANEL_CSS_START = "/* obc-home: pannello in alto (inizio) */"
+TOP_PANEL_CSS_END = "/* obc-home: pannello in alto (fine) */"
+TOP_PANEL_CSS = """
+.xfce4-panel.background { background-color: #101114; color: #ffffff; }
+.xfce4-panel button { background-color: transparent; background-image: none; border: none; box-shadow: none;
+                      border-radius: 10px; color: #ffffff; padding: 2px 8px; }
+.xfce4-panel button:hover { background-color: #23262d; }
+.xfce4-panel button:checked, .xfce4-panel button:active { background-color: #ffb547; color: #101114; }
+.xfce4-panel button:checked label, .xfce4-panel button:active label { color: #101114; }
+.xfce4-panel label { color: #ffffff; }
 """
 
 
@@ -81,10 +126,58 @@ def read(path, default=""):
         return default
 
 
+def icon_name(names, fallback="application-x-executable"):
+    theme = Gtk.IconTheme.get_default()
+    return next((n for n in names if theme.has_icon(n)), fallback)
+
+
 def http_json(url):
     req = urllib.request.Request(url, headers={"User-Agent": "obc-home/1.0"})
     with urllib.request.urlopen(req, timeout=10) as r:
         return json.loads(r.read().decode())
+
+
+def setup_top_panel():
+    """Il pannello in alto di XFCE si nasconde da solo (scende con lo swipe sulla home) e prende i colori
+    della home. Cambia le impostazioni solo se servono."""
+    if not shutil.which("xfconf-query"):
+        return
+
+    def get(prop):
+        return sh(f"xfconf-query -c xfce4-panel -p {prop}")
+
+    def put(prop, *typed):        # typed: ("uint", "2") oppure più coppie per un array
+        args = " ".join(f"-t {t} -s {v}" for t, v in typed)
+        sh(f"xfconf-query -c xfce4-panel -p {prop} -n {args} 2>/dev/null || "
+           f"xfconf-query -c xfce4-panel -p {prop} {args}")
+
+    rgba = ("0.063", "0.067", "0.078", "1")       # #101114, lo sfondo della home
+    for pid in re.findall(r"^\d+$", get("/panels"), re.M):
+        base = f"/panels/panel-{pid}"
+        top = get(f"{base}/position").split(";")[0] == "p=6"
+        if top and get(f"{base}/autohide-behavior") != "2":
+            put(f"{base}/autohide-behavior", ("uint", "2"))
+        if get(f"{base}/background-style") != "1":
+            put(f"{base}/background-style", ("uint", "1"))
+        cur = re.findall(r"^[0-9.]+$", get(f"{base}/background-rgba"), re.M)
+        if [round(float(v), 3) for v in cur] != [float(v) for v in rgba]:
+            put(f"{base}/background-rgba", *[("double", v) for v in rgba])
+        if top and get(f"{base}/size") != "48":
+            put(f"{base}/size", ("uint", "48"))
+
+    css_file = os.path.expanduser("~/.config/gtk-3.0/gtk.css")
+    old = read(css_file)
+    block = TOP_PANEL_CSS_START + TOP_PANEL_CSS + TOP_PANEL_CSS_END
+    if TOP_PANEL_CSS_START in old and TOP_PANEL_CSS_END in old:
+        new = re.sub(re.escape(TOP_PANEL_CSS_START) + ".*?" + re.escape(TOP_PANEL_CSS_END),
+                     lambda _m: block, old, flags=re.S)
+    else:
+        new = (old + "\n\n" if old else "") + block
+    if new.strip() != old.strip():
+        os.makedirs(os.path.dirname(css_file), exist_ok=True)
+        with open(css_file, "w") as f:
+            f.write(new.strip() + "\n")
+        sh("xfce4-panel -r")      # il pannello rilegge gtk.css solo ripartendo
 
 
 class TouchFocus:
@@ -118,34 +211,143 @@ class TouchFocus:
             GLib.idle_add(self.drop, True)
 
 
+class Slot(Gtk.Overlay):
+    """Un riquadro configurabile. In modalità modifica il riquadro si rimpicciolisce e oscilla
+    (disegnato ruotato con cairo) e mostra i pulsanti ✕ (libera) e matita (cambia), o + se è vuoto."""
+
+    SCALE = 0.9
+    ANGLE = 3.0       # gradi
+    HZ = 2.2          # oscillazioni al secondo
+
+    def __init__(self, home, index):
+        super().__init__()
+        self.home, self.index = home, index
+        self.big = index == 0
+        self.long_pressed = False
+        self.holder = Gtk.Box()
+        self.holder.connect("draw", self.on_draw)
+        self.add(self.holder)
+        self.btn = None
+
+        self.del_btn = self.badge("badge-del", ["window-close-symbolic"], Gtk.Align.START,
+                                  lambda: self.home.clear_slot(self.index))
+        self.del_btn.get_accessible().set_name("Libera il riquadro")
+        self.edit_btn = self.badge("badge-edit", ["document-edit-symbolic", "edit-symbolic"], Gtk.Align.END,
+                                   lambda: self.home.choose_for(self.index))
+        self.edit_btn.get_accessible().set_name("Cambia il riquadro")
+        self.refresh()
+
+    def badge(self, cls, icons, halign, action):
+        b = Gtk.Button(halign=halign, valign=Gtk.Align.START)
+        b.get_style_context().add_class("badge"); b.get_style_context().add_class(cls)
+        img = Gtk.Image.new_from_icon_name(icon_name(icons, icons[0]), Gtk.IconSize.BUTTON)
+        img.set_pixel_size(20)
+        img.show()                 # il pulsante ha no_show_all: l'icona va mostrata a parte
+        b.add(img)
+        b.connect("clicked", lambda *_: action())
+        b.set_no_show_all(True)
+        self.add_overlay(b)
+        return b
+
+    def refresh(self):
+        view = self.home.slot_view(self.index)
+        if self.btn is not None:
+            self.holder.remove(self.btn)
+        self.empty = view is None
+        if self.empty:    # vuoto: un "+" che si vede solo in modalità modifica
+            b = self.home.tile(None, ["list-add-symbolic"], None, icon_size=56 if self.big else 44)
+            b.get_style_context().add_class("tile-empty")
+            b.img.set_no_show_all(True)
+            self.action = lambda: self.home.choose_for(self.index)
+        else:
+            label, icons, action = view
+            b = self.home.tile(label, icons, None, icon_size=96 if self.big else 64)
+            self.action = action
+        b.connect("clicked", self.on_clicked)
+        b.long_gesture = Gtk.GestureLongPress(widget=b)   # il riferimento deve restare vivo
+        b.long_gesture.connect("pressed", self.on_long)
+        self.btn = b
+        self.holder.pack_start(b, True, True, 0)
+        b.show_all()
+        self.set_editing(self.home.editing)
+
+    def set_editing(self, on):
+        self.del_btn.set_visible(on and not self.empty)
+        self.edit_btn.set_visible(on and not self.empty)
+        if self.empty:
+            self.btn.img.set_visible(on)
+        self.holder.queue_draw()
+
+    def on_clicked(self, *_):
+        if self.long_pressed:            # il rilascio dopo una pressione lunga non fa niente
+            self.long_pressed = False
+            return
+        if self.home.editing:
+            self.home.choose_for(self.index)
+        else:
+            self.action()
+
+    def on_long(self, *_):
+        self.long_pressed = True
+        if not self.home.editing:
+            self.home.set_editing(True)
+
+    def on_draw(self, widget, cr):
+        if not self.home.editing:
+            return False
+        a = widget.get_allocation()
+        t = self.home.wiggle_t
+        phase = 0.0 if self.index % 2 else 3.14159
+        angle = math.radians(self.ANGLE) * math.sin(2 * math.pi * self.HZ * t + phase)
+        cr.translate(a.width / 2, a.height / 2)
+        cr.rotate(angle)
+        cr.scale(self.SCALE, self.SCALE)
+        cr.translate(-a.width / 2, -a.height / 2)
+        widget.propagate_draw(self.btn, cr)
+        return True
+
+
 class Home(Gtk.ApplicationWindow):
     def __init__(self, app):
         super().__init__(application=app, title="Home")
         self.get_style_context().add_class("home")
         self.set_default_size(1024, 600)
-        self.cfg = configparser.ConfigParser()
+        # non a schermo intero: così il pannello in alto di XFCE (nascosto) può scendere sopra la home
+        self.set_decorated(False)
+        self.cfg = configparser.ConfigParser(interpolation=None)
         self.cfg.read(CONF)
+        self.editing = False
+        self.wiggle_t = 0.0
+        self.wiggle_id = 0
+        self.slots_cfg = self.load_slots()
 
-        root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
-        root.set_margin_top(18); root.set_margin_bottom(10)
+        root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        root.set_margin_top(14); root.set_margin_bottom(8)
         root.set_margin_start(22); root.set_margin_end(22)
+        self.root = root
         self.overlay = Gtk.Overlay()   # le finestre "modali" (aggiornamenti) stanno sopra la home
         self.overlay.add(root)
         self.add(self.overlay)
 
-        # --- intestazione: orologio + meteo ---
-        head = Gtk.Box(spacing=16)
-        root.pack_start(head, False, False, 0)
+        # --- griglia 5 x 3: orologio (2x1), modifica, meteo (2x1); riquadro grande (1x2) e 8 riquadri ---
+        grid = Gtk.Grid(row_spacing=14, column_spacing=14, row_homogeneous=True, column_homogeneous=True)
+        root.pack_start(grid, True, True, 0)
 
-        clockbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        clockbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, valign=Gtk.Align.CENTER)
         self.clock = Gtk.Label(xalign=0); self.clock.get_style_context().add_class("clock")
         self.date = Gtk.Label(xalign=0); self.date.get_style_context().add_class("date")
         clockbox.pack_start(self.clock, False, False, 0)
         clockbox.pack_start(self.date, False, False, 0)
-        head.pack_start(clockbox, True, True, 0)
+        grid.attach(clockbox, 0, 0, 2, 1)
+
+        self.mode_btn = Gtk.Button()
+        self.mode_btn.get_style_context().add_class("tile"); self.mode_btn.get_style_context().add_class("tile-mode")
+        self.mode_img = Gtk.Image()
+        self.mode_btn.add(self.mode_img)
+        self.mode_btn.connect("clicked", lambda *_: self.set_editing(not self.editing))
+        grid.attach(self.mode_btn, 2, 0, 1, 1)
 
         wbtn = Gtk.Button(); wbtn.get_style_context().add_class("tile")
-        wbtn.set_size_request(330, -1)
         wbtn.connect("clicked", self.ask_city)
         wbox = Gtk.Box(spacing=14); wbox.set_margin_start(10); wbox.set_margin_end(10)
         self.wicon = Gtk.Image.new_from_icon_name("weather-few-clouds", Gtk.IconSize.DIALOG)
@@ -160,33 +362,25 @@ class Home(Gtk.ApplicationWindow):
         wbox.pack_start(self.wicon, False, False, 0)
         wbox.pack_start(wtext, True, True, 0)
         wbtn.add(wbox)
-        head.pack_end(wbtn, False, False, 0)
+        grid.attach(wbtn, 3, 0, 2, 1)
 
-        # --- riquadri ---
-        grid = Gtk.Grid(row_spacing=14, column_spacing=14, row_homogeneous=True, column_homogeneous=True)
-        root.pack_start(grid, True, True, 0)
-        # riquadro grande: l'app scelta in ~/.config/obc-home.ini ([launcher] main_app = <file .desktop>);
-        # se non c'è, toccandolo si sceglie dall'elenco delle app; pressione lunga = cambia app
-        self.grid = grid
-        self.main_tile = None
-        self.build_main_tile()
-        tiles = [
-            ("Terminale", ["utilities-terminal"], lambda: self.run("xfce4-terminal")),
-            ("File", ["system-file-manager", "folder"], lambda: self.run("thunar")),
-            ("Impostazioni", ["preferences-system", "applications-system"], lambda: self.run("xfce4-settings-manager")),
-            ("Wi-Fi e rete", ["network-wireless", "preferences-system-network"], lambda: self.run("nm-connection-editor")),
-            ("Tastiera", ["input-keyboard", "preferences-desktop-keyboard"], self.toggle_keyboard),
-            ("Desktop", ["user-desktop", "desktop"], self.show_desktop),
-            ("Android", ["phone", "smartphone", "computer"], self.boot_android),
-            ("Spegni", ["system-shutdown"], self.poweroff),
-        ]
-        if not shutil.which("boot-android"):  # solo sulle schede con il dual boot Android/Alpine
-            tiles = [t for t in tiles if t[0] != "Android"]
-        for i, (label, icons, action) in enumerate(tiles):
-            grid.attach(self.tile(label, icons, action), 1 + i % 4, i // 4, 1, 1)
+        # riquadri configurabili ([tiles] in ~/.config/obc-home.ini); pressione lunga = modalità modifica
+        self.slots = [Slot(self, i) for i in range(SLOTS)]
+        grid.attach(self.slots[0], 0, 1, 1, 2)
+        for i, slot in enumerate(self.slots[1:]):
+            grid.attach(slot, 1 + i % 4, 1 + i // 4, 1, 1)
+        self.update_mode_btn()
+
+        # swipe verso il basso: fa scendere il pannello in alto di XFCE; verso l'alto: lo richiude
+        self.swipe = Gtk.GestureDrag(widget=self)
+        self.swipe.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        self.swipe.connect("drag-update", self.on_swipe_update)
+        self.swipe.connect("drag-end", self.on_swipe_end)
+        self.swipe_dir = 0
 
         # --- barra di stato ---
-        bar = Gtk.Box(spacing=26)
+        bar = Gtk.Box(spacing=20)
+        bar.set_size_request(-1, 44)
         root.pack_end(bar, False, False, 0)
         self.s_wifi = self.status_item(bar, "network-wireless-symbolic")
         self.s_ip = self.status_item(bar, "network-workgroup-symbolic")
@@ -194,14 +388,16 @@ class Home(Gtk.ApplicationWindow):
         self.s_temp = self.status_item(bar, "temperature-symbolic")
         self.s_up = self.status_item(bar, "alarm-symbolic")
         ver = Gtk.Button()
-        vb = Gtk.Box(spacing=6)
+        vb = Gtk.Box(spacing=8)
         vi = Gtk.Image.new_from_icon_name("view-refresh-symbolic", Gtk.IconSize.MENU)
+        vi.set_pixel_size(20)
         vb.pack_start(Gtk.Label(label="v" + obc_update.read_version(APP_DIR)), False, False, 0)
         vb.pack_start(vi, False, False, 0)
         ver.add(vb)
         ver.get_style_context().add_class("verbtn")
         ver.get_accessible().set_name("Controlla aggiornamenti")
         ver.connect("clicked", lambda *_: self.check_updates())
+        ver.set_valign(Gtk.Align.CENTER)
         bar.pack_end(ver, False, False, 0)
 
         self.tick()
@@ -211,6 +407,8 @@ class Home(Gtk.ApplicationWindow):
         self.refresh_weather()
         GLib.timeout_add_seconds(900, self.refresh_weather)
         self.touch_focus = TouchFocus(self)
+        threading.Thread(target=setup_top_panel, daemon=True).start()
+        self.fetch_missing_icons()
         # partita bene: se era appena stata aggiornata, l'aggiornamento resta
         GLib.timeout_add_seconds(20, obc_update.confirm_started, NAME)
         GLib.timeout_add_seconds(2, lambda: obc_update.UpdateDialog(
@@ -220,85 +418,220 @@ class Home(Gtk.ApplicationWindow):
         obc_update.UpdateDialog(self.overlay, NAME, REPO, APP_DIR, WRAPPER,
                                 quit_cb=self.get_application().quit).start()
 
-    def main_app(self):
-        """(etichetta, icone, azione) del riquadro grande."""
-        app_id = self.cfg.get("launcher", "main_app", fallback="").strip()
-        if app_id:
-            if not app_id.endswith(".desktop"):
-                app_id += ".desktop"
+    # ---------- riquadri configurabili ----------
+    # valori in [tiles] slot0..slot8:  app:<file .desktop>  |  web:<url>  |  home:<funzione>  |  vuoto
+
+    def load_slots(self):
+        if self.cfg.has_section("tiles"):
+            return [self.cfg.get("tiles", f"slot{i}", fallback="").strip() for i in range(SLOTS)]
+        # prima volta: i riquadri di sempre (e l'app scelta in [launcher] main_app nel riquadro grande)
+        main = self.cfg.get("launcher", "main_app", fallback="").strip()
+        if main and not main.endswith(".desktop"):
+            main += ".desktop"
+        funcs = ["terminal", "files", "settings", "network", "keyboard", "desktop", "android", "poweroff"]
+        if not shutil.which("boot-android"):
+            funcs.remove("android")
+        slots = [f"app:{main}" if main else ""] + [f"home:{f}" for f in funcs]
+        return (slots + [""] * SLOTS)[:SLOTS]
+
+    def save_slots(self):
+        self.cfg["tiles"] = {f"slot{i}": v for i, v in enumerate(self.slots_cfg)}
+        self.cfg.remove_section("launcher")      # sostituito da [tiles]
+        self.save_cfg()
+
+    def slot_view(self, i):
+        """(etichetta, icone, azione) del riquadro i, o None se è vuoto."""
+        kind, _, val = self.slots_cfg[i].partition(":")
+        if kind == "app" and val:
             try:
-                info = Gio.DesktopAppInfo.new(app_id)
+                info = DesktopAppInfo.new(val)
             except TypeError:
                 info = None
             if info is not None:
                 return (info.get_display_name(), info.get_icon() or ["application-x-executable"],
                         lambda: self.launch(info))
-        return ("Scegli un'app", ["view-app-grid", "applications-all", "list-add"], self.choose_main_app)
+            return (val.removesuffix(".desktop"), ["dialog-question"],
+                    lambda: self.message(f"L'app {val} non è più installata."))
+        if kind == "web" and val:
+            icon = obc_favicon.cached(val)
+            pb = None
+            if icon:
+                try:
+                    pb = GdkPixbuf.Pixbuf.new_from_file(icon)
+                except GLib.Error:
+                    pb = None
+            return (obc_favicon.site_name(val), pb or ["applications-internet", "web-browser"],
+                    lambda: self.open_url(val))
+        if kind == "home" and val in FUNCS:
+            if val == "android" and not shutil.which("boot-android"):
+                return None
+            label, icons, what = FUNCS[val]
+            action = getattr(self, what) if hasattr(self, what) else (lambda: self.run(what))
+            return (label, icons, action)
+        return None
 
-    def build_main_tile(self):
-        if self.main_tile is not None:
-            self.grid.remove(self.main_tile)
-        label, icons, action = self.main_app()
-        b = self.tile(label, icons, lambda: None, icon_size=96, connect=False)
-        b.long_pressed = False
+    def set_slot(self, i, value):
+        self.slots_cfg[i] = value
+        self.save_slots()
+        self.slots[i].refresh()
 
-        def on_clicked(*_):
-            if b.long_pressed:      # il rilascio dopo una pressione lunga non avvia l'app
-                b.long_pressed = False
+    def clear_slot(self, i):
+        self.set_slot(i, "")
+
+    def choose_for(self, i):
+        value = self.pick_tile(i)
+        if value is None:
+            return
+        if value == "web:":
+            value = self.ask_url()
+            if value is None:
                 return
-            action()
+        self.set_slot(i, value)
+        if value.startswith("web:") and not obc_favicon.cached(value[4:]):
+            self.fetch_icon(value[4:])
 
-        def on_long(*_):
-            b.long_pressed = True
-            self.choose_main_app()
+    def fetch_missing_icons(self):
+        for v in self.slots_cfg:
+            if v.startswith("web:") and not obc_favicon.cached(v[4:]):
+                self.fetch_icon(v[4:])
 
-        b.connect("clicked", on_clicked)
-        b.long_gesture = Gtk.GestureLongPress(widget=b)   # il riferimento deve restare vivo
-        b.long_gesture.connect("pressed", on_long)
-        self.main_tile = b
-        self.grid.attach(b, 0, 0, 1, 2)
-        b.show_all()
+    def fetch_icon(self, url):
+        def work():
+            if obc_favicon.fetch(url):
+                GLib.idle_add(self.refresh_web, url)
+        threading.Thread(target=work, daemon=True).start()
 
-    def choose_main_app(self):
+    def refresh_web(self, url):
+        for i, v in enumerate(self.slots_cfg):
+            if v == "web:" + url:
+                self.slots[i].refresh()
+        return False
+
+    def set_editing(self, on):
+        self.editing = on
+        ctx = self.root.get_style_context()
+        (ctx.add_class if on else ctx.remove_class)("editing")
+        for s in self.slots:
+            s.set_editing(on)
+        self.update_mode_btn()
+        if on and not self.wiggle_id:
+            start = time.monotonic()
+
+            def step():
+                self.wiggle_t = time.monotonic() - start
+                for s in self.slots:
+                    s.holder.queue_draw()
+                return True
+            self.wiggle_id = GLib.timeout_add(40, step)
+        elif not on and self.wiggle_id:
+            GLib.source_remove(self.wiggle_id)
+            self.wiggle_id = 0
+
+    def update_mode_btn(self):
+        ctx = self.mode_btn.get_style_context()
+        if self.editing:
+            ctx.add_class("on")
+            self.mode_img.set_from_icon_name(icon_name(["object-select-symbolic", "emblem-ok-symbolic"]),
+                                             Gtk.IconSize.DIALOG)
+            self.mode_btn.get_accessible().set_name("Fine modifica")
+        else:
+            ctx.remove_class("on")
+            self.mode_img.set_from_icon_name(icon_name(["document-edit-symbolic", "edit-symbolic"]),
+                                             Gtk.IconSize.DIALOG)
+            self.mode_btn.get_accessible().set_name("Modifica i riquadri")
+        self.mode_img.set_pixel_size(44)
+
+    def pick_tile(self, i):
+        """Elenco per scegliere il contenuto del riquadro i: sito web, funzioni della home, app installate.
+        Restituisce il valore da salvare ("web:" = chiedi l'indirizzo) o None."""
         apps = {}
         for info in Gio.AppInfo.get_all():
             app_id = info.get_id()
             if app_id and info.should_show() and app_id != "obc-home.desktop":
                 apps.setdefault(app_id, info)
-        apps = sorted(apps.values(), key=lambda i: i.get_display_name().casefold())
+        apps = sorted(apps.values(), key=lambda a: a.get_display_name().casefold())
 
-        d = Gtk.Dialog(title="App del riquadro grande", transient_for=self, modal=True)
-        d.set_default_size(560, 470)
+        d = Gtk.Dialog(title="Scegli cosa mettere nel riquadro", transient_for=self, modal=True)
+        d.set_default_size(600, 520)
         d.add_buttons("Annulla", Gtk.ResponseType.CANCEL)
         sw = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.NEVER)
         lst = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE, activate_on_single_click=True)
         sw.add(lst)
         box = d.get_content_area(); box.set_spacing(10); box.set_margin_top(12)
         box.set_margin_start(12); box.set_margin_end(12)
-        box.add(Gtk.Label(label="Tocca l'app da mettere nel riquadro grande:", xalign=0))
         box.pack_start(sw, True, True, 0)
-        for info in apps:
+
+        def head(text):
+            row = Gtk.ListBoxRow(activatable=False, selectable=False)
+            lab = Gtk.Label(label=text, xalign=0); lab.get_style_context().add_class("pick-head")
+            lab.set_margin_start(6)
+            row.add(lab)
+            lst.add(row)
+
+        def item(value, label, icon):
             row = Gtk.ListBoxRow()
             hb = Gtk.Box(spacing=14); hb.set_margin_top(8); hb.set_margin_bottom(8); hb.set_margin_start(6)
-            icon = info.get_icon()
-            img = (Gtk.Image.new_from_gicon(icon, Gtk.IconSize.DIALOG) if icon
-                   else Gtk.Image.new_from_icon_name("application-x-executable", Gtk.IconSize.DIALOG))
+            if isinstance(icon, Gio.Icon):
+                img = Gtk.Image.new_from_gicon(icon, Gtk.IconSize.DIALOG)
+            else:
+                img = Gtk.Image.new_from_icon_name(icon_name(icon), Gtk.IconSize.DIALOG)
             img.set_pixel_size(40)
             hb.pack_start(img, False, False, 0)
-            hb.pack_start(Gtk.Label(label=info.get_display_name(), xalign=0), True, True, 0)
+            hb.pack_start(Gtk.Label(label=label, xalign=0), True, True, 0)
             row.add(hb)
-            row.app_id = info.get_id()
+            row.value = value
             lst.add(row)
+
+        item("web:", "Sito web…", ["applications-internet", "web-browser"])
+        head("Funzioni della home")
+        for fid, (label, icons, _) in FUNCS.items():
+            if fid == "android" and not shutil.which("boot-android"):
+                continue
+            item("home:" + fid, label, icons)
+        head("Applicazioni")
+        for info in apps:
+            item("app:" + info.get_id(), info.get_display_name(), info.get_icon() or ["application-x-executable"])
+
         chosen = []
-        lst.connect("row-activated", lambda _l, row: (chosen.append(row.app_id), d.response(Gtk.ResponseType.OK)))
+        lst.connect("row-activated", lambda _l, row: (chosen.append(row.value), d.response(Gtk.ResponseType.OK)))
         d.show_all()
         d.run(); d.destroy()
-        if chosen:
-            if not self.cfg.has_section("launcher"):
-                self.cfg.add_section("launcher")
-            self.cfg["launcher"]["main_app"] = chosen[0]
-            self.save_cfg()
-            self.build_main_tile()
+        return chosen[0] if chosen else None
+
+    def ask_url(self):
+        d = Gtk.Dialog(title="Sito web", transient_for=self, modal=True)
+        d.add_buttons("Annulla", Gtk.ResponseType.CANCEL, "Salva", Gtk.ResponseType.OK)
+        e = Gtk.Entry(placeholder_text="esempio.it", input_purpose=Gtk.InputPurpose.URL)
+        e.set_activates_default(True)
+        d.set_default_response(Gtk.ResponseType.OK)
+        err = Gtk.Label(xalign=0); err.get_style_context().add_class("wdesc")
+        box = d.get_content_area(); box.set_spacing(10); box.set_margin_top(12)
+        box.set_margin_start(12); box.set_margin_end(12)
+        box.add(Gtk.Label(label="Scrivi l'indirizzo del sito:", xalign=0)); box.add(e); box.add(err)
+        d.show_all()
+        self.toggle_keyboard_if_hidden()
+        while True:
+            r = d.run()
+            if r != Gtk.ResponseType.OK:
+                d.destroy(); self.hide_keyboard()
+                return None
+            url = obc_favicon.normalize(e.get_text())
+            if url:
+                d.destroy(); self.hide_keyboard()
+                return "web:" + url
+            err.set_text("Indirizzo non valido")
+
+    def open_url(self, url):
+        try:
+            Gio.AppInfo.launch_default_for_uri(url, None)
+            return
+        except GLib.Error:
+            pass
+        for cmd in (["exo-open", "--launch", "WebBrowser", url], ["xdg-open", url]):
+            if shutil.which(cmd[0]):
+                subprocess.Popen(cmd, start_new_session=True)
+                return
+        self.message("Nessun browser installato per aprire " + url)
 
     def launch(self, info):
         try:
@@ -306,29 +639,59 @@ class Home(Gtk.ApplicationWindow):
         except GLib.Error as e:
             self.message(f"Impossibile avviare {info.get_display_name()}: {e.message}")
 
+    # ---------- pannello in alto (swipe) ----------
+
+    def on_swipe_update(self, gesture, dx, dy):
+        if self.swipe_dir == 0 and abs(dy) > 60 and abs(dy) > 2 * abs(dx):
+            self.swipe_dir = 1 if dy > 0 else -1
+            gesture.set_state(Gtk.EventSequenceState.CLAIMED)    # niente clic sul riquadro sotto il dito
+
+    def on_swipe_end(self, gesture, dx, dy):
+        d, self.swipe_dir = self.swipe_dir, 0
+        if d:
+            # il pannello si nasconde da solo ("nascondi sempre") e scende quando il puntatore tocca il bordo
+            # in alto: si sposta il puntatore lì; lontano dal bordo, il pannello risale
+            GLib.timeout_add(50, self.warp_pointer, 1 if d > 0 else 300)
+
+    def warp_pointer(self, y):
+        # x: a un terzo della larghezza, di solito una parte vuota del pannello (niente suggerimenti)
+        geo = self.get_display().get_monitor_at_window(self.get_window()).get_geometry()
+        seat = self.get_display().get_default_seat()
+        seat.get_pointer().warp(self.get_screen(), geo.x + geo.width // 3, geo.y + y)
+        return False
+
     # ---------- costruzione ----------
 
-    def tile(self, label, icons, action, icon_size=64, connect=True):
+    def tile(self, label, icons, action, icon_size=64):
+        """Pulsante-riquadro: icona (nome/i dal tema, Gio.Icon o GdkPixbuf) ed etichetta (None = nessuna)."""
         b = Gtk.Button(); b.get_style_context().add_class("tile")
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10, valign=Gtk.Align.CENTER)
-        if isinstance(icons, Gio.Icon):          # icona di un'app installata (file .desktop)
+        if isinstance(icons, GdkPixbuf.Pixbuf):  # icona di un sito web
+            k = icon_size / max(icons.get_width(), icons.get_height())
+            pb = icons.scale_simple(round(icons.get_width() * k), round(icons.get_height() * k),
+                                    GdkPixbuf.InterpType.HYPER)
+            img = Gtk.Image.new_from_pixbuf(pb)
+        elif isinstance(icons, Gio.Icon):        # icona di un'app installata (file .desktop)
             img = Gtk.Image.new_from_gicon(icons, Gtk.IconSize.DIALOG)
         else:
-            theme = Gtk.IconTheme.get_default()
-            name = next((n for n in icons if theme.has_icon(n)), "application-x-executable")
-            img = Gtk.Image.new_from_icon_name(name, Gtk.IconSize.DIALOG)
-        img.set_pixel_size(icon_size)
+            img = Gtk.Image.new_from_icon_name(icon_name(icons), Gtk.IconSize.DIALOG)
+        if not isinstance(icons, GdkPixbuf.Pixbuf):
+            img.set_pixel_size(icon_size)
         box.pack_start(img, False, False, 0)
-        box.pack_start(Gtk.Label(label=label), False, False, 0)
+        if label is not None:
+            lab = Gtk.Label(label=label, ellipsize=3, max_width_chars=14)   # 3 = Pango.EllipsizeMode.END
+            box.pack_start(lab, False, False, 0)
         b.add(box)
-        if connect:
+        b.img = img
+        if action is not None:
             b.connect("clicked", lambda *_: action())
         return b
 
     def status_item(self, bar, icon):
         box = Gtk.Box(spacing=6)
         img = Gtk.Image.new_from_icon_name(icon, Gtk.IconSize.MENU)
-        lab = Gtk.Label(); lab.get_style_context().add_class("status")
+        img.set_pixel_size(20)
+        lab = Gtk.Label(ellipsize=3); lab.get_style_context().add_class("status")   # 3 = END: si accorcia se non ci sta
         box.pack_start(img, False, False, 0)
         box.pack_start(lab, False, False, 0)
         bar.pack_start(box, False, False, 0)
@@ -462,7 +825,7 @@ class Home(Gtk.ApplicationWindow):
         box.add(Gtk.Label(label="Scrivi il nome della città:", xalign=0)); box.add(e)
         d.show_all()
         self.toggle_keyboard_if_hidden()
-        r = d.run(); city = e.get_text().strip(); d.destroy()
+        r = d.run(); city = e.get_text().strip(); d.destroy(); self.hide_keyboard()
         if r == Gtk.ResponseType.OK and city:
             self.cfg["meteo"] = {"citta": city}
             self.save_cfg()
@@ -472,6 +835,10 @@ class Home(Gtk.ApplicationWindow):
     def toggle_keyboard_if_hidden(self):
         self.run("dbus-send --type=method_call --dest=org.onboard.Onboard /org/onboard/Onboard/Keyboard "
                  "org.onboard.Onboard.Keyboard.Show")
+
+    def hide_keyboard(self):
+        self.run("dbus-send --type=method_call --dest=org.onboard.Onboard /org/onboard/Onboard/Keyboard "
+                 "org.onboard.Onboard.Keyboard.Hide")
 
 
 class App(Gtk.Application):
@@ -495,7 +862,7 @@ class App(Gtk.Application):
         if self.win is None:
             self.win = Home(self)
             self.win.show_all()
-            self.win.fullscreen()
+            self.win.maximize()
         else:
             self.win.deiconify()
             self.win.present()

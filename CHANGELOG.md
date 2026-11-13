@@ -2,6 +2,14 @@
 
 All notable changes to obc40-home. Versions follow [semantic versioning](https://semver.org/).
 
+## 0.1.0
+
+- New layout: clock, edit button and weather are part of the tile grid (clock and weather two tiles wide).
+- Edit mode: tap the pencil or long-press a tile. Tiles shrink and wiggle; ✕ empties a tile, the pencil changes it, + fills an empty one, ✓ ends.
+- Every tile can hold an installed app, a home function or a website; a website tile shows the site's icon. The tiles are saved in `[tiles]` in `~/.config/obc-home.ini` (the 0.0.3 `main_app` setting is taken over).
+- Swipe down on the home to bring down the XFCE top panel, swipe up to hide it. The home is now maximised instead of full screen, sets the top panel to hide itself and styles the panels with the home's colours.
+- Bigger status bar, with an easier to tap version button.
+
 ## 0.0.3
 
 - Choose the app of the big tile on the screen: tap the empty tile (or long-press it to change the app) and pick from the list of installed apps; the choice is saved in `~/.config/obc-home.ini`. Before, the list only launched the app and the tile stayed empty.
