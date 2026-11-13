@@ -2,6 +2,11 @@
 
 All notable changes to obc40-home. Versions follow [semantic versioning](https://semver.org/).
 
+## 0.1.2
+
+- Edit mode: tiles no longer wiggle, and dragging is gone. To reorder, tap a tile (it lights up), then tap another one: the two swap. Tap the lit tile again to cancel.
+- A tile is changed only from its pencil button; an empty tile is still filled by tapping it.
+
 ## 0.1.1
 
 - Edit mode: drag a tile onto another one to swap them.
