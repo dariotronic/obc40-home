@@ -1,5 +1,6 @@
-"""Icone dei siti web per i riquadri della home: cerca l'icona più grande dichiarata dalla pagina
-(apple-touch-icon, <link rel="icon" sizes=...>), altrimenti /favicon.ico, e la salva in PNG nella cache."""
+"""Icone e nomi dei siti web per i riquadri della home: cerca l'icona più grande dichiarata dalla pagina
+(apple-touch-icon, <link rel="icon" sizes=...>), altrimenti /favicon.ico, e la salva in PNG nella cache;
+il nome viene da og:site_name, application-name o dal titolo della pagina."""
 import base64
 import hashlib
 import os
@@ -43,15 +44,56 @@ def cached(url):
     return p if os.path.exists(p) else None
 
 
+def cached_name(url):
+    """Nome del sito salvato in cache, o None."""
+    try:
+        with open(cache_path(url)[:-4] + ".name", encoding="utf-8") as f:
+            return f.read().strip() or None
+    except OSError:
+        return None
+
+
+def _title_name(title, url):
+    """Dal titolo della pagina ("Notizie - Il Sito") tiene la parte che somiglia all'indirizzo."""
+    parts = [p.strip() for p in re.split(r"\s[|\-–—·:]\s|:\s", title) if p.strip()]
+    if not parts:
+        return None
+    host = re.sub(r"[^a-z0-9]", "", site_name(url).rsplit(".", 1)[0].lower())
+    for p in parts:
+        key = re.sub(r"[^a-z0-9]", "", p.lower())
+        if key and (key in host or host in key):
+            return p
+    return parts[0] if len(parts[0]) <= 30 else None
+
+
 class _Links(HTMLParser):
     def __init__(self):
         super().__init__()
         self.icons = []      # (dimensione stimata, href)
+        self.names = {}      # og:site_name / application-name / apple-mobile-web-app-title
+        self.title = ""
+        self._in_title = False
+
+    def handle_endtag(self, tag):
+        if tag == "title":
+            self._in_title = False
+
+    def handle_data(self, data):
+        if self._in_title:
+            self.title += data
 
     def handle_starttag(self, tag, attrs):
+        a = dict(attrs)
+        if tag == "title" and not self.title:
+            self._in_title = True
+            return
+        if tag == "meta":
+            key = (a.get("property") or a.get("name") or "").lower()
+            if key in ("og:site_name", "application-name", "apple-mobile-web-app-title") and a.get("content"):
+                self.names.setdefault(key, a["content"].strip())
+            return
         if tag != "link":
             return
-        a = dict(attrs)
         rel = (a.get("rel") or "").lower().split()
         href = a.get("href")
         if not href or not any(r in ("icon", "apple-touch-icon", "apple-touch-icon-precomposed") for r in rel):
@@ -96,7 +138,7 @@ def _pixbuf(data):
 
 
 def fetch(url):
-    """Scarica l'icona del sito e la salva nella cache. Restituisce il percorso del PNG o None."""
+    """Scarica icona e nome del sito e li salva nella cache. Restituisce il percorso del PNG o None."""
     candidates = []
     base = url
     try:
@@ -104,6 +146,12 @@ def fetch(url):
         p = _Links()
         p.feed(html.decode("utf-8", errors="replace"))
         candidates = sorted(p.icons, key=lambda c: -c[0])
+        name = (p.names.get("og:site_name") or p.names.get("application-name")
+                or p.names.get("apple-mobile-web-app-title") or _title_name(" ".join(p.title.split()), url))
+        if name:
+            os.makedirs(CACHE, exist_ok=True)
+            with open(cache_path(url)[:-4] + ".name", "w", encoding="utf-8") as f:
+                f.write(name[:40] + "\n")
     except Exception:
         pass
     urls = [urllib.parse.urljoin(base, h) for _, h in candidates]

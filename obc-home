@@ -69,8 +69,10 @@ window.home { background-color: #101114; }
 .wsmall { font-size: 14px; color: #9aa0aa; }
 .tile-empty { background-color: #15171c; }
 .editing .tile-empty { background-color: #1b1d23; color: #ffb547; }
-.tile-mode { color: #c9ced6; }
-.tile-mode.on { background-color: #ffb547; color: #101114; }
+button.modebtn { background-color: #23262d; background-image: none; border: none; box-shadow: none;
+                 color: #e6e8ec; padding: 0; min-width: 64px; min-height: 64px; border-radius: 32px; }
+button.modebtn:active { background-color: #ffb547; color: #101114; }
+button.modebtn.on { background-color: #ffb547; color: #101114; }
 button.badge { min-width: 36px; min-height: 36px; padding: 0; border-radius: 18px; border: none;
                background-image: none; box-shadow: none; }
 button.badge-del { background-color: #3a3d45; color: #ffffff; }
@@ -295,6 +297,12 @@ class Slot(Gtk.Overlay):
     def on_draw(self, widget, cr):
         if not self.home.editing:
             return False
+        if self.home.moving and self is self.home.move_src:     # il riquadro è "nel dito": qui resta un'ombra
+            cr.push_group()
+            widget.propagate_draw(self.btn, cr)
+            cr.pop_group_to_source()
+            cr.paint_with_alpha(0.15)
+            return True
         a = widget.get_allocation()
         t = self.home.wiggle_t
         phase = 0.0 if self.index % 2 else 3.14159
@@ -303,7 +311,13 @@ class Slot(Gtk.Overlay):
         cr.rotate(angle)
         cr.scale(self.SCALE, self.SCALE)
         cr.translate(-a.width / 2, -a.height / 2)
-        widget.propagate_draw(self.btn, cr)
+        if self.home.moving and self is self.home.move_target:  # qui andrebbe a finire: più tenue
+            cr.push_group()
+            widget.propagate_draw(self.btn, cr)
+            cr.pop_group_to_source()
+            cr.paint_with_alpha(0.5)
+        else:
+            widget.propagate_draw(self.btn, cr)
         return True
 
 
@@ -340,8 +354,9 @@ class Home(Gtk.ApplicationWindow):
         clockbox.pack_start(self.date, False, False, 0)
         grid.attach(clockbox, 0, 0, 2, 1)
 
-        self.mode_btn = Gtk.Button()
-        self.mode_btn.get_style_context().add_class("tile"); self.mode_btn.get_style_context().add_class("tile-mode")
+        # al centro in alto: solo un cerchio con la matita (✓ in modalità modifica)
+        self.mode_btn = Gtk.Button(halign=Gtk.Align.CENTER, valign=Gtk.Align.CENTER)
+        self.mode_btn.get_style_context().add_class("modebtn")
         self.mode_img = Gtk.Image()
         self.mode_btn.add(self.mode_img)
         self.mode_btn.connect("clicked", lambda *_: self.set_editing(not self.editing))
@@ -354,8 +369,9 @@ class Home(Gtk.ApplicationWindow):
         self.wicon.set_pixel_size(72)
         wtext = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, valign=Gtk.Align.CENTER)
         self.wtemp = Gtk.Label(label="--°", xalign=0); self.wtemp.get_style_context().add_class("temp")
-        self.wdesc = Gtk.Label(label="Meteo", xalign=0); self.wdesc.get_style_context().add_class("wdesc")
-        self.wsmall = Gtk.Label(label="Tocca per impostare la città", xalign=0)
+        # ellipsize 3 = END: le scritte si accorciano invece di allargare la griglia oltre lo schermo
+        self.wdesc = Gtk.Label(label="Meteo", xalign=0, ellipsize=3); self.wdesc.get_style_context().add_class("wdesc")
+        self.wsmall = Gtk.Label(label="Tocca per impostare la città", xalign=0, ellipsize=3)
         self.wsmall.get_style_context().add_class("wsmall")
         for w in (self.wtemp, self.wdesc, self.wsmall):
             wtext.pack_start(w, False, False, 0)
@@ -370,6 +386,17 @@ class Home(Gtk.ApplicationWindow):
         for i, slot in enumerate(self.slots[1:]):
             grid.attach(slot, 1 + i % 4, 1 + i // 4, 1, 1)
         self.update_mode_btn()
+
+        # modalità modifica: un riquadro trascinato su un altro si scambia con quello
+        self.moving = False
+        self.move_src = self.move_target = None
+        self.move_start = self.move_delta = (0, 0)
+        self.overlay.connect_after("draw", self.on_move_layer_draw)   # il riquadro nel dito, sopra tutto
+        self.move = Gtk.GestureDrag(widget=self)
+        self.move.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        self.move.connect("drag-begin", self.on_move_begin)
+        self.move.connect("drag-update", self.on_move_update)
+        self.move.connect("drag-end", self.on_move_end)
 
         # swipe verso il basso: fa scendere il pannello in alto di XFCE; verso l'alto: lo richiude
         self.swipe = Gtk.GestureDrag(widget=self)
@@ -460,7 +487,7 @@ class Home(Gtk.ApplicationWindow):
                     pb = GdkPixbuf.Pixbuf.new_from_file(icon)
                 except GLib.Error:
                     pb = None
-            return (obc_favicon.site_name(val), pb or ["applications-internet", "web-browser"],
+            return (obc_favicon.cached_name(val) or obc_favicon.site_name(val), pb or ["applications-internet", "web-browser"],
                     lambda: self.open_url(val))
         if kind == "home" and val in FUNCS:
             if val == "android" and not shutil.which("boot-android"):
@@ -487,18 +514,18 @@ class Home(Gtk.ApplicationWindow):
             if value is None:
                 return
         self.set_slot(i, value)
-        if value.startswith("web:") and not obc_favicon.cached(value[4:]):
+        if value.startswith("web:"):
             self.fetch_icon(value[4:])
 
     def fetch_missing_icons(self):
         for v in self.slots_cfg:
-            if v.startswith("web:") and not obc_favicon.cached(v[4:]):
+            if v.startswith("web:") and not (obc_favicon.cached(v[4:]) and obc_favicon.cached_name(v[4:])):
                 self.fetch_icon(v[4:])
 
     def fetch_icon(self, url):
         def work():
-            if obc_favicon.fetch(url):
-                GLib.idle_add(self.refresh_web, url)
+            obc_favicon.fetch(url)            # icona e nome del sito
+            GLib.idle_add(self.refresh_web, url)
         threading.Thread(target=work, daemon=True).start()
 
     def refresh_web(self, url):
@@ -539,7 +566,7 @@ class Home(Gtk.ApplicationWindow):
             self.mode_img.set_from_icon_name(icon_name(["document-edit-symbolic", "edit-symbolic"]),
                                              Gtk.IconSize.DIALOG)
             self.mode_btn.get_accessible().set_name("Modifica i riquadri")
-        self.mode_img.set_pixel_size(44)
+        self.mode_img.set_pixel_size(28)
 
     def pick_tile(self, i):
         """Elenco per scegliere il contenuto del riquadro i: sito web, funzioni della home, app installate.
@@ -639,9 +666,70 @@ class Home(Gtk.ApplicationWindow):
         except GLib.Error as e:
             self.message(f"Impossibile avviare {info.get_display_name()}: {e.message}")
 
+    # ---------- spostamento dei riquadri (modalità modifica) ----------
+
+    def slot_at(self, x, y):
+        for s in self.slots:
+            sx, sy = s.translate_coordinates(self, 0, 0)
+            if sx <= x < sx + s.get_allocated_width() and sy <= y < sy + s.get_allocated_height():
+                return s
+        return None
+
+    def on_move_begin(self, gesture, x, y):
+        self.move_src = self.slot_at(x, y)
+        self.move_start = (x, y)
+
+    def on_move_update(self, gesture, dx, dy):
+        src = self.move_src
+        if src is None or not self.editing:      # (con la pressione lunga si entra in modifica a metà gesto)
+            return
+        if not self.moving:
+            if math.hypot(dx, dy) < 18:
+                return
+            self.moving = True
+            gesture.set_state(Gtk.EventSequenceState.CLAIMED)   # niente clic sul riquadro
+            src.del_btn.hide(); src.edit_btn.hide()
+        self.move_delta = (dx, dy)
+        target = self.slot_at(self.move_start[0] + dx, self.move_start[1] + dy)
+        self.move_target = target if target is not src else None
+        self.overlay.queue_draw()
+
+    def on_move_end(self, gesture, dx, dy):
+        src, target, was_moving = self.move_src, self.move_target, self.moving
+        self.moving = False
+        self.move_src = self.move_target = None
+        self.overlay.queue_draw()
+        if not was_moving or src is None:
+            return
+        src.long_pressed = False
+        if target is not None:
+            a, b = src.index, target.index
+            self.slots_cfg[a], self.slots_cfg[b] = self.slots_cfg[b], self.slots_cfg[a]
+            self.save_slots()
+            # i riquadri si ricreano a gesto finito (il pulsante sotto il dito riceve ancora eventi)
+            GLib.idle_add(lambda: (src.refresh(), target.refresh()) and False)
+        else:
+            src.set_editing(self.editing)
+
+    def on_move_layer_draw(self, area, cr):
+        if not self.moving or self.move_src is None:
+            return False
+        btn = self.move_src.btn
+        bx, by = btn.translate_coordinates(area, 0, 0)
+        cr.save()
+        w, h = btn.get_allocated_width(), btn.get_allocated_height()
+        cr.translate(bx + self.move_delta[0] + w / 2, by + self.move_delta[1] + h / 2)
+        cr.scale(1.05, 1.05)
+        cr.translate(-w / 2, -h / 2)
+        btn.draw(cr)
+        cr.restore()
+        return False
+
     # ---------- pannello in alto (swipe) ----------
 
     def on_swipe_update(self, gesture, dx, dy):
+        if self.editing:              # in modalità modifica il dito sposta i riquadri
+            return
         if self.swipe_dir == 0 and abs(dy) > 60 and abs(dy) > 2 * abs(dx):
             self.swipe_dir = 1 if dy > 0 else -1
             gesture.set_state(Gtk.EventSequenceState.CLAIMED)    # niente clic sul riquadro sotto il dito
