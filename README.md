@@ -10,7 +10,7 @@ A full-screen, touch-friendly launcher for the **OBC40** board (HTE/Tecnint, NXP
 
 - One grid: big clock and date, an edit button, and the weather from [Open-Meteo](https://open-meteo.com/) (no account needed; tap the weather card to set your city).
 - Nine tiles you choose yourself, one of them twice as tall. By default they hold Terminal, Files, Settings, Wi-Fi, on-screen keyboard, Desktop, **Android** and Power off (the Android function only exists on dual-boot boards that have `boot-android`).
-- **Edit mode**: tap the pencil (or long-press a tile). Tiles shrink and wiggle; tap **✕** to empty a tile, the **pencil** to change it, **+** to fill an empty one. You can pick an installed app, a home function, or a **website**: type its address and the tile shows the site's icon. Tap **✓** when done.
+- **Edit mode**: tap the round pencil button (or long-press a tile). Tiles shrink and wiggle; **drag** a tile onto another to swap them, tap **✕** to empty a tile, the **pencil** to change it, **+** to fill an empty one. You can pick an installed app, a home function, or a **website**: type its address and the tile shows the site's icon and name. Tap **✓** when done.
 - **Swipe down** anywhere on the home to bring down the XFCE top panel (application menu, open windows, tray, clock); swipe up or touch elsewhere to hide it again. The home sets that panel to hide itself and gives it the home's colours (see [Configuration](#configuration)).
 - Status bar with Wi-Fi network and signal, IP address, battery, temperature and uptime.
 - `obc-fitwin`: maximises windows that would not fit the 600 px high screen.
@@ -65,7 +65,7 @@ Optional, to make the XFCE desktop itself touch-friendly the way the author uses
 | `~/.local/bin/obc-home`, `~/.local/bin/obc-fitwin` | launchers |
 | `~/.config/autostart/obc-home.desktop`, `obc-fitwin.desktop` | start at login |
 | `~/.config/obc-home.ini` | your settings (see below) |
-| `~/.cache/obc-home/icons/` | icons of the websites in the tiles |
+| `~/.cache/obc-home/icons/` | icons and names of the websites in the tiles |
 
 ## Configuration
 
@@ -166,7 +166,7 @@ Issues and pull requests are welcome. Only the maintainers can push to this repo
 **Cosa fa:**
 - un'unica griglia con orologio e data, il pulsante per modificare e il meteo (tocca il meteo per scegliere la città);
 - nove riquadri a scelta, uno alto il doppio; di partenza Terminale, File, Impostazioni, Wi-Fi, tastiera a schermo, Desktop, Android (solo sulle schede con dual boot) e Spegni;
-- **modalità modifica**: tocca la matita (o tieni premuto un riquadro). I riquadri si rimpiccioliscono e oscillano: **✕** libera un riquadro, la **matita** lo cambia, **+** riempie quello vuoto. Puoi scegliere un'app installata, una funzione della home o un **sito web** (scrivi l'indirizzo, l'icona sarà quella del sito). Tocca **✓** per finire;
+- **modalità modifica**: tocca il pulsante tondo con la matita (o tieni premuto un riquadro). I riquadri si rimpiccioliscono e oscillano: **trascina** un riquadro su un altro per scambiarli, **✕** libera un riquadro, la **matita** lo cambia, **+** riempie quello vuoto. Puoi scegliere un'app installata, una funzione della home o un **sito web** (scrivi l'indirizzo: icona e nome saranno quelli del sito). Tocca **✓** per finire;
 - **swipe verso il basso** sulla home: scende il pannello in alto di XFCE (menu delle applicazioni, finestre aperte, area di notifica, orologio); swipe verso l'alto o un tocco altrove lo nasconde;
 - barra di stato con Wi-Fi, indirizzo IP, batteria, temperatura e tempo di accensione.
 

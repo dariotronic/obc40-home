@@ -2,6 +2,13 @@
 
 All notable changes to obc40-home. Versions follow [semantic versioning](https://semver.org/).
 
+## 0.1.1
+
+- Edit mode: drag a tile onto another one to swap them.
+- Website tiles show the site's name (from the page) instead of its address.
+- The edit button is now just a pencil in a small round button, without a tile around it.
+- Fix: a long weather text no longer makes the home wider than the screen.
+
 ## 0.1.0
 
 - New layout: clock, edit button and weather are part of the tile grid (clock and weather two tiles wide).
