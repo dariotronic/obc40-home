@@ -2,6 +2,10 @@
 
 All notable changes to obc40-home. Versions follow [semantic versioning](https://semver.org/).
 
+## Unreleased
+
+- Fixed: the status bar showed no battery level on the mainline kernel, where the battery is `stc3100-battery` instead of `battery1`. The home now uses the first power supply of type Battery.
+
 ## 0.1.2
 
 - Edit mode: tiles no longer wiggle, and dragging is gone. To reorder, tap a tile (it lights up), then tap another one: the two swap. Tap the lit tile again to cancel.

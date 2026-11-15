@@ -128,6 +128,20 @@ def read(path, default=""):
         return default
 
 
+def battery_dir():
+    """Cartella sysfs della batteria: il nome cambia col kernel (battery1 col 4.14 Tecnint,
+    stc3100-battery col mainline), quindi si cerca il primo power_supply di tipo Battery."""
+    base = "/sys/class/power_supply"
+    try:
+        names = sorted(os.listdir(base))
+    except OSError:
+        return None
+    for n in names:
+        if read(f"{base}/{n}/type") == "Battery":
+            return f"{base}/{n}"
+    return None
+
+
 def icon_name(names, fallback="application-x-executable"):
     theme = Gtk.IconTheme.get_default()
     return next((n for n in names if theme.has_icon(n)), fallback)
@@ -733,9 +747,13 @@ class Home(Gtk.ApplicationWindow):
             else:
                 wifi = "non connesso"
             ip = sh("ip -4 -o addr show scope global | awk '{print $4}' | cut -d/ -f1 | head -1") or "-"
-            cap = read("/sys/class/power_supply/battery1/capacity", "?")
-            st = read("/sys/class/power_supply/battery1/status")
-            batt = f"{cap}%" + ("  in carica" if st == "Charging" else "")
+            bat = battery_dir()
+            if bat:
+                cap = read(f"{bat}/capacity", "?")
+                st = read(f"{bat}/status")
+                batt = f"{cap}%" + ("  in carica" if st == "Charging" else "")
+            else:
+                batt = "-"
             try:
                 temp = f"{int(read('/sys/class/thermal/thermal_zone0/temp', '0')) / 1000:.0f} °C"
             except ValueError:
