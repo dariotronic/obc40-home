@@ -5,6 +5,7 @@ All notable changes to obc40-home. Versions follow [semantic versioning](https:/
 ## Unreleased
 
 - Fixed: the status bar showed no battery level on the mainline kernel, where the battery is `stc3100-battery` instead of `battery1`. The home now uses the first power supply of type Battery.
+- The on-screen keyboard (onboard) uses the system font for its keys. The home sets it at start and again whenever the system font changes.
 
 ## 0.1.2
 

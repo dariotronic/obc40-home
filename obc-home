@@ -20,7 +20,8 @@ import gi
 gi.require_version("Gtk", "3.0")
 gi.require_version("Gdk", "3.0")
 gi.require_version("GdkPixbuf", "2.0")
-from gi.repository import Gdk, GdkPixbuf, Gio, GLib, Gtk  # noqa: E402
+gi.require_version("Pango", "1.0")
+from gi.repository import Gdk, GdkPixbuf, Gio, GLib, Gtk, Pango  # noqa: E402
 
 APP_DIR = os.path.dirname(os.path.realpath(__file__))
 sys.path.insert(0, APP_DIR)
@@ -151,6 +152,25 @@ def http_json(url):
     req = urllib.request.Request(url, headers={"User-Agent": "obc-home/1.0"})
     with urllib.request.urlopen(req, timeout=10) as r:
         return json.loads(r.read().decode())
+
+
+def sync_keyboard_font(*_):
+    """La tastiera a schermo (onboard) usa per i tasti la famiglia del font di sistema. Va scritta
+    sia nel default di onboard sia nelle impostazioni del tema, che hanno la precedenza.
+    Cambia le impostazioni solo se servono; senza onboard non fa nulla."""
+    name = Gtk.Settings.get_default().get_property("gtk-font-name") or ""
+    family = Pango.FontDescription.from_string(name).get_family() if name else None
+    src = Gio.SettingsSchemaSource.get_default()
+    if not family or src is None:
+        return
+    for schema in ("org.onboard", "org.onboard.theme-settings"):
+        sch = src.lookup(schema, True)
+        if sch is None or not sch.has_key("key-label-font"):
+            continue
+        s = Gio.Settings.new(schema)
+        if s.get_string("key-label-font") != family:
+            s.set_string("key-label-font", family)
+    Gio.Settings.sync()
 
 
 def setup_top_panel():
@@ -425,6 +445,8 @@ class Home(Gtk.ApplicationWindow):
         GLib.timeout_add_seconds(900, self.refresh_weather)
         self.touch_focus = TouchFocus(self)
         threading.Thread(target=setup_top_panel, daemon=True).start()
+        sync_keyboard_font()   # e di nuovo se il font di sistema cambia mentre la home è aperta
+        Gtk.Settings.get_default().connect("notify::gtk-font-name", sync_keyboard_font)
         self.fetch_missing_icons()
         # partita bene: se era appena stata aggiornata, l'aggiornamento resta
         GLib.timeout_add_seconds(20, obc_update.confirm_started, NAME)
